@@ -1,0 +1,541 @@
+\documentclass{article}
+
+% Self-contained layout that follows the NeurIPS style (single column,
+% 5.5in x 9in text block, 10pt Times, ruled title) without neurips_*.sty.
+\usepackage[letterpaper,textwidth=5.5in,textheight=9in,top=1in,headheight=12pt,headsep=25pt,footskip=30pt]{geometry}
+\usepackage{times}
+\usepackage[numbers,sort&compress]{natbib}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5.5pt}
+\renewcommand{\normalsize}{\fontsize{10pt}{11pt}\selectfont}
+\makeatletter
+\renewcommand{\section}{\@startsection{section}{1}{\z@}%
+  {-2.0ex \@plus -0.5ex \@minus -0.2ex}{1.5ex \@plus 0.3ex \@minus 0.2ex}{\large\bfseries\raggedright}}
+\renewcommand{\subsection}{\@startsection{subsection}{2}{\z@}%
+  {-1.8ex \@plus -0.5ex \@minus -0.2ex}{0.8ex \@plus 0.2ex}{\normalsize\bfseries\raggedright}}
+\renewcommand{\paragraph}{\@startsection{paragraph}{4}{\z@}%
+  {1.5ex \@plus 0.5ex \@minus 0.2ex}{-1em}{\normalsize\bfseries}}
+\renewcommand{\maketitle}{%
+  \vbox{\hsize\textwidth\linewidth\hsize
+    \vskip 0.1in \hrule height 4pt \vskip 0.25in \vskip -\parskip
+    \centering{\LARGE\bfseries\@title\par}
+    \vskip 0.29in \vskip -\parskip \hrule height 1pt \vskip 0.09in}
+  \begin{center}\begin{tabular}[t]{c}\@author\end{tabular}\end{center}
+  \vskip 0.3in \@minus 0.1in}
+\renewenvironment{abstract}{%
+  \vskip 0.075in \centerline{\large\bfseries Abstract}\vspace{0.5ex}%
+  \list{}{\setlength{\leftmargin}{0.5in}\setlength{\rightmargin}{0.5in}}\item\relax}
+  {\endlist\vskip 1ex}
+\makeatother
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{mathtools}
+\usepackage{xcolor}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{proposition}{Proposition}
+\newtheorem{lemma}{Lemma}
+\newtheorem{corollary}{Corollary}
+\theoremstyle{remark}
+\newtheorem{remark}{Remark}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Cov}{\operatorname{Cov}}
+\newcommand{\tr}{\operatorname{tr}}
+\newcommand{\xn}[1]{x^{(#1)}}
+\newcommand{\eps}{\hat\varepsilon}
+\newcommand{\lmax}{\lambda_{\max}}
+\newcommand{\tol}{\mathrm{tol}}
+\newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
+
+\title{BendFlow: Closed-Form Trajectory Curvature and\\ Curvature-Adaptive Sampling for Flow Matching}
+
+\author{%
+  \textbf{Lado Turmanidze}\\
+  Universit\"at des Saarlandes\\
+  \today
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Flow matching samplers follow a velocity field from noise to data, and their discretisation error is governed by how much the trajectory bends. We study this bending for the exact marginal field of a finite training set under the linear path. The field is determined by the posterior over training images given the current noisy point, and we express the bending through the first three moments of that posterior: its mean $m$, covariance $C$ and third central moment $\kappa$. Building on the known identity $\ddot x=\dot m/(1-t)$, we derive the closed form $\dot m = C\eps/(1-t)^2 - t\kappa/(1-t)^3$, where $\eps$ is the predicted noise. We then bound $\lmax(C)$ and $\|\kappa\|$ by the diameter of an active set of training images near the current point, which gives a local, data-dependent bound on the bending instead of a fixed range of timesteps. Finally we turn the result into a step-size rule for the Euler sampler that estimates $\dot m$ from consecutive denoised predictions at no extra network evaluations. \todo{one sentence on the experimental findings once the experiments are done.}
+\end{abstract}
+
+\section{Introduction}
+
+A flow matching model \citep{lipman2023flow} generates an image by integrating an ordinary differential equation $\dot x=u_t(x)$ from noise at $t=0$ to data at $t=1$. Some stretches of this journey are easy, because the path is straight and big steps are fine. Others are hard, because the path bends sharply and big steps go wrong. Recent work locates the hard part in a range of timesteps and then spends more training or more sampling steps there \citep{csflow,stablevelocity}.
+
+We do not want a result of the form ``between timesteps $0.3$ and $0.4$ the field changes fastest''. We want the difficulty to depend on the field and on the neighbourhood of the current point. The starting observation is that at every noisy point the model is implicitly asking which training image the point came from. The answer is a posterior distribution over training images, and the claim of this paper is that difficulty is uncertainty: the path is hard exactly while the posterior is torn between several training images that are far apart.
+
+\paragraph{Contributions.}
+\begin{itemize}
+  \item We collect the known identities for the spatial Jacobian, the divergence and the trajectory acceleration of the flow matching field in one notation (Section~\ref{sec:known}).
+  \item We derive a closed form for the rate of change $\dot m$ of the denoised prediction along a trajectory in terms of the posterior covariance and third moment (Theorem~\ref{thm:mdot}). Earlier work left the time derivative of the denoiser as an unexplained symbol.
+  \item We bound the bending by the diameter of an active set of training images (Theorem~\ref{thm:local}); the bound on the covariance cannot be improved.
+  \item We derive a curvature-adaptive step size for the Euler sampler together with an estimator of $\dot m$ that costs no extra network evaluations (Section~\ref{sec:sampler}).
+\end{itemize}
+The first three items are statements about the exact field of a finite training set. Whether trained networks follow them is an empirical question, which Section~\ref{sec:experiments} addresses.
+
+\section{Setup and notation}\label{sec:setup}
+
+Let $\xn{1},\dots,\xn{N}\in\R^d$ be the training set and let the path be $x_t=t\,x_1+(1-t)\,\varepsilon$ with $\varepsilon\sim\mathcal N(0,I)$. We treat the training set as the data distribution, so the marginal path is $p_t(x)=\frac1N\sum_{i=1}^N\mathcal N\big(x;\,t\,\xn{i},(1-t)^2I\big)$. Let
+\begin{equation}\label{eq:w}
+  w_i(x,t)=\frac{\exp\!\big(-\|x-t\,\xn{i}\|^2/2(1-t)^2\big)}{\sum_j\exp\!\big(-\|x-t\,\xn{j}\|^2/2(1-t)^2\big)}
+\end{equation}
+be the posterior, that is, the probability that $x$ came from image $i$, and define
+\begin{equation}\label{eq:moments}
+  m=\sum_i w_i\,\xn{i},\qquad
+  C=\sum_i w_i\,(\xn{i}-m)(\xn{i}-m)^\top,\qquad
+  \kappa=\sum_i w_i\,\|\xn{i}-m\|^2(\xn{i}-m),
+\end{equation}
+\begin{equation}\label{eq:u}
+  \eps=\frac{x-t\,m}{1-t},\qquad u_t(x)=\frac{m-x}{1-t}.
+\end{equation}
+$m$, $C$ and $\kappa$ are the first three moments of the posterior: its mean, spread and asymmetry. $m$ is the best guess of the clean image. How uncertain that guess is is described by $C$, and it is $0$ when we are $100\%$ sure. $\kappa$ describes the asymmetry of the posterior and is $0$ when the posterior is symmetric. We will need $C$ when we differentiate $m$ with respect to space and $\kappa$ when we differentiate it along a trajectory. The field $u_t$ in \eqref{eq:u} is the marginal field: plugging $u_t(x\mid x_1)=\frac{x_1-x}{1-t}$ into the marginalization theorem gives $u_t(x)=\frac{m-x}{1-t}$ (Appendix~\ref{app:marginal}). The matrix $C$ is symmetric and positive semi-definite (Appendix~\ref{app:psd}), so its eigenvalues are real and lie in $[0,\lmax]$ with $\lmax=\max_{\|v\|=1}v^\top Cv$.
+
+Throughout, $r=1-t$, and a dot denotes the total derivative $\frac{d}{dt}$ along a trajectory $\dot x=u_t(x)$.
+
+\section{Known identities in our notation}\label{sec:known}
+
+\paragraph{Jacobian.} What we want is $\nabla_xu_t(x)$, because it says how nearby trajectories move relative to each other: a large positive eigenvalue means they separate fast. Since $u_t$ is just $m$ plus a simple term, $\nabla_xu_t=\frac{1}{1-t}\nabla_xm-\frac{1}{1-t}I$, and it suffices to compute $\nabla_xm\in\R^{d\times d}$.
+
+\begin{proposition}[\citealp{wan2024elucidating}, Prop.~C.2; \citealp{lv2026uncertainty}, Eq.~16]\label{prop:jac}
+\begin{equation}\label{eq:jac}
+  \nabla_xm=\frac{t}{(1-t)^2}\,C,\qquad
+  \nabla_xu_t=\frac{1}{1-t}\Big(\frac{t}{(1-t)^2}\,C-I\Big).
+\end{equation}
+\end{proposition}
+This is the second-order Tweedie formula \citep{efron2011tweedie,manor2024posterior}. We give a self-contained proof for the finite training set in Appendix~\ref{app:jac}. Because $C$ is multiplied by a scalar and shifted by a multiple of $I$, $\nabla_xu_t$ has the same eigenvectors as $C$, and each eigenvalue $\lambda$ of $C$ becomes
+\[
+  \mu=\frac{1}{1-t}\Big(\frac{t\lambda}{(1-t)^2}-1\Big).
+\]
+As $\lambda\in[0,\lmax]$, the eigenvalues of $\nabla_xu_t$ lie in
+\begin{equation}\label{eq:eigrange}
+  \Big[-\frac{1}{1-t},\ \frac{1}{1-t}\Big(\frac{t\,\lmax(C)}{(1-t)^2}-1\Big)\Big].
+\end{equation}
+$\mu<0$ means trajectories contract in that direction, and when $C=0$ everything is pulled onto one image at rate $\frac{1}{1-t}$. $\mu>0$ means trajectories separate, which only happens when $\lmax(C)>\frac{(1-t)^2}{t}$, while the sample is still ``choosing'' between images that are far apart. Since $C$ is symmetric, $\nabla_xu_t$ is symmetric, so locally the field only stretches or compresses along orthogonal axes (the eigenvectors of $C$) and never rotates.
+
+\paragraph{Divergence.} From \citet{lv2026uncertainty} (Eq.~19 and Section~3) we get
+\begin{equation}\label{eq:lv}
+  \tr(C)=\frac{(1-t)^2}{t}\big(d+(1-t)\,\nabla\!\cdot u_t\big),\qquad
+  \frac{d}{dt}\log p_t(x_t)=-\nabla\!\cdot u_t(x_t).
+\end{equation}
+Since $u_t(x\mid\xn{i})-u_t(x)=\frac{\xn{i}-m}{1-t}$, the variance of the training target at $x$ is
+\[
+  V_t(x)=\sum_iw_i\Big\|\frac{\xn{i}-m}{1-t}\Big\|^2=\frac{\tr(C)}{(1-t)^2},
+\]
+and substituting gives
+\begin{equation}\label{eq:div}
+  \nabla\!\cdot u_t=\frac{t\,V_t-d}{1-t},\qquad
+  \frac{d}{dt}\log p_t(x_t)=\frac{d-t\,V_t(x_t)}{1-t}.
+\end{equation}
+So the field contracts volume (density rises along the trajectory) unless the training targets at $x$ disagree strongly. $V_t$ is the velocity variance studied by \citet{stablevelocity}.
+
+\paragraph{Acceleration.} From \citet{rao2026geometry} (Proposition~A.1, Eq.~18), in our notation,
+\begin{equation}\label{eq:acc}
+  \ddot x=\frac{\dot m}{1-t}.
+\end{equation}
+The proof differentiates $u_t=\frac{m-x}{1-t}$ and uses $\dot x=u$ and $\frac{m-x}{1-t}=u$, which gives $\ddot x=\frac{\dot m-u}{1-t}+\frac{u}{1-t}$. So a trajectory bends exactly when its denoised prediction moves. In the same paper they also split $\dot m=\partial_tm+(\nabla_xm)\,u$ but give no closed form for $\partial_tm$. From here on it is new territory: we compute $\dot m$ exactly in terms of the posterior moments $C$ and $\kappa$.
+
+\section{Closed form for \texorpdfstring{$\dot m$}{the rate of change of the denoiser}}\label{sec:mdot}
+
+\begin{theorem}\label{thm:mdot}
+Along any trajectory $\dot x=u_t(x)$ of the field \eqref{eq:u}, for $t\in(0,1)$,
+\begin{equation}\label{eq:mdot}
+  \dot m=\frac{C\,\eps}{(1-t)^2}-\frac{t\,\kappa}{(1-t)^3},
+  \qquad\text{and hence}\qquad
+  \ddot x=\frac{C\,\eps}{(1-t)^3}-\frac{t\,\kappa}{(1-t)^4}.
+\end{equation}
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+Write $w_i=e^{g_i}/\sum_je^{g_j}$ with $g_i=-\|x-t\,\xn{i}\|^2/2r^2$. Since the training points are constant, $\dot m=\sum_i\dot w_i\,\xn{i}$, and differentiating $\log w_i$ in time gives the same softmax rule as for the spatial gradient, $\dot w_i=w_i(\dot g_i-\sum_jw_j\dot g_j)$. Subtracting $m$ times a zero sum yields
+\begin{equation}\label{eq:covform}
+  \dot m=\sum_iw_i\,(\xn{i}-m)\,\dot g_i .
+\end{equation}
+Any part of $\dot g_i$ that does not depend on $i$ contributes nothing to $\dot m$, so we only need to track the $i$-dependent part of $\dot g_i$. The sum \eqref{eq:covform} is a weighted covariance between $\xn{i}$ and $\dot g_i$, and a covariance treats the three kinds of terms differently; the one-dimensional version is $\Cov(X,c+bX+aX^2)=0+b\,\mathrm{Var}(X)+a\,\Cov(X,X^2)$. So sorting $\dot g_i$ by how it depends on $\xn{i}$ is the same as sorting it by what each part becomes: the part without $\xn{i}$ contributes nothing, the linear part $b\cdot\xn{i}$ contributes $Cb$, and the quadratic part $\|\xn{i}\|^2$ contributes $2Cm+\kappa$. Computing $\dot g_i$ gives $b=\frac{(1+t)x+t\,r\,u}{r^3}$ and the quadratic coefficient $-\frac{t}{r^3}$, hence $\dot m=C\big(b-\frac{2tm}{r^3}\big)-\frac{t\kappa}{r^3}$, and $r\,u=m-x$ simplifies the bracket to $\eps/r^2$. The full computation is in Appendix~\ref{app:mdot}.
+\end{proof}
+
+\begin{corollary}[Euler's error]\label{cor:euler}
+Since $u=\dot x$, Taylor's theorem gives $x(t+h)=x+h\,u+\frac{h^2}{2}\ddot x+O(h^3)$. An Euler step keeps only $x+h\,u$, so its local error is
+\begin{equation}\label{eq:euler}
+  x(t+h)-(x+h\,u)=\frac{h^2}{2(1-t)}\,\dot m+O(h^3).
+\end{equation}
+\end{corollary}
+
+\paragraph{Interpretation of the results.} A trajectory curves only through the spread ($C$) and the asymmetry ($\kappa$) of the posterior over training images. If one image has all the weight, then $C=0$ and $\kappa=0$, so $\dot m=0$: the path is a straight line and Euler is exact. That agrees with the zero-baseline result of \citet{rao2026geometry}. If the posterior is symmetric about $m$, then $\kappa=0$ and only the $C\eps$ term remains. For exactly two images with equal weights that term vanishes too, because then $C=\frac{\Delta^2}{4}ee^\top$ with $e\cdot\eps=0$; the bending occurs next to the symmetric point, not at it.
+
+\section{Local bounds}\label{sec:bounds}
+
+The weights $w_i$ decay exponentially with distance, so most images have negligible weight. We want to say this precisely, so that every sum can be split into an active and an inactive index set.
+
+\paragraph{Active set.} Let $i^\star$ be the point with the largest weight, equivalently the largest $g_i$. For a fixed $\delta\in(0,1)$ define
+\begin{equation}\label{eq:active}
+  A=\Big\{i:\ g_i\ge g_{i^\star}-\log\frac{N}{\delta}\Big\}.
+\end{equation}
+\begin{lemma}\label{lem:tail}
+$\sum_{i\notin A}w_i\le\delta$.
+\end{lemma}
+Geometrically, the active points are those almost as close to the rescaled point $x/t$ as the nearest point: $i\in A$ if and only if $\|x/t-\xn{i}\|^2\le\|x/t-\xn{i^\star}\|^2+2\big(\frac{1-t}{t}\big)^2\log\frac N\delta$. The allowed slack shrinks to zero as $t\to1$. Two diameters are used in what follows,
+\[
+  D_A=\max_{i,j\in A}\|\xn{i}-\xn{j}\|\qquad\text{and}\qquad D=\max_{i,j}\|\xn{i}-\xn{j}\|.
+\]
+
+\begin{theorem}\label{thm:local}
+For every $x$, $t\in(0,1)$ and $\delta\in(0,1)$,
+\begin{align}
+  \lmax(C)&\le\frac{D_A^2}{4}+\delta D^2, \label{eq:lam}\\
+  \|\kappa\|&\le(D_A+\delta D)^3+\delta D^3, \label{eq:kap}\\
+  \|\dot m\|&\le\frac{\big(\frac{D_A^2}{4}+\delta D^2\big)\|\eps\|}{(1-t)^2}+\frac{t\,\big[(D_A+\delta D)^3+\delta D^3\big]}{(1-t)^3}, \label{eq:local}
+\end{align}
+and $\|\ddot x\|=\|\dot m\|/(1-t)$.
+\end{theorem}
+The proofs are in Appendix~\ref{app:bounds}. The bound depends on $x$ and $t$ only through the active set, which makes it a local, data-dependent statement. Inserting \eqref{eq:lam} into the eigenvalue range \eqref{eq:eigrange} gives
+\begin{equation}\label{eq:lamjac}
+  \lmax(\nabla_xu_t)\le\frac{1}{1-t}\Big(\frac{t}{(1-t)^2}\Big(\frac{D_A^2}{4}+\delta D^2\Big)-1\Big).
+\end{equation}
+
+\paragraph{Tightness.} Take $\xn{1},\xn{2}$ with $\|\xn{1}-\xn{2}\|=\Delta$ and $x=t\cdot\frac{\xn{1}+\xn{2}}{2}$. Both are equally far from $x/t$, so $w_1=w_2=\frac12$, both are active, and $D_A=\Delta$. Along $e=\frac{\xn{1}-\xn{2}}{\Delta}$ we get $e^\top Ce=\frac12\big(\frac\Delta2\big)^2+\frac12\big(\frac\Delta2\big)^2=\frac{\Delta^2}{4}$, so $\frac{D_A^2}{4}$ cannot be improved. The bound \eqref{eq:kap} is not tight: in the two-point example $\kappa=0$ by symmetry. Consequently \eqref{eq:local} is an upper bound and is not claimed to be tight.
+
+\section{Curvature-adaptive step sizes}\label{sec:sampler}
+
+We know how much a trajectory bends ($\ddot x=\frac{\dot m}{1-t}$). Here we turn that into a rule for choosing the step size of the Euler sampler, using only quantities the sampler already computes.
+
+\paragraph{The error of one Euler step.} Let $x(t)$ be the exact trajectory and suppose the sampler sits exactly on it at time $t$, at the point $x=x(t)$. By Taylor's theorem, $x(t+h)=x(t)+h\,\dot x(t)+\frac{h^2}{2}\ddot x(t)+O(h^3)$. The Euler sampler moves to $x^{\mathrm{Euler}}=x+h\,u_t(x)$. Since $\dot x(t)=u_t(x)$ by definition of the trajectory, the first two terms of the Taylor expansion are exactly the Euler step, and inserting $\ddot x=\frac{\dot m}{1-t}$,
+\[
+  x(t+h)-x^{\mathrm{Euler}}=\frac{h^2}{2}\ddot x(t)+O(h^3)=\frac{h^2}{2(1-t)}\,\dot m+O(h^3)
+\]
+is the local error.
+
+\paragraph{Choosing the step size.} With equal steps $h$, the local error is proportional to $\frac{\|\dot m\|}{1-t}$, so where the posterior is undecided it is large, and it is almost zero where the path is straight; a uniform grid spends evaluations where they achieve nothing. A remedy is to make every step commit the same error, by fixing a tolerance $\tol>0$ and requiring
+\begin{equation}\label{eq:h}
+  \frac{h^2}{2(1-t)}\,\|\dot m\|=\tol
+  \quad\Longleftrightarrow\quad
+  h=\sqrt{\frac{2(1-t)\,\tol}{\|\dot m\|}},
+\end{equation}
+so steps become small where the trajectory bends and large where it is straight, for each sample individually.
+
+\paragraph{Estimating $\dot m$ at no extra cost.} Calculating $\|\dot m\|$ requires the training set, which a trained network does not expose. But $m$ is available: $u_t(x)=\frac{m-x}{1-t}$ is equivalent to $m=x+(1-t)\,u_t(x)$, so at step $k$, with the network output $v_k\approx u_{t_k}(x_k)$ that the sampler computes anyway, we get the denoised prediction $\hat x_1^{(k)}=x_k+(1-t_k)\,v_k\approx m_{t_k}(x_k)$. Since $\dot m$ is the rate of change of $m$ along the trajectory, the natural estimate is the difference of two consecutive predictions,
+\begin{equation}\label{eq:est}
+  \widehat{\dot m}_k=\frac{\hat x_1^{(k)}-\hat x_1^{(k-1)}}{h_{k-1}}.
+\end{equation}
+\begin{proposition}\label{prop:est}
+For the exact field, $\widehat{\dot m}_k=\dot m(t_{k-1})+O(h_{k-1})$.
+\end{proposition}
+The proof is in Appendix~\ref{app:est}. The estimate describes time $t_{k-1}$ but is used to choose the step at $t_k$. Since $\dot m(t_k)=\dot m(t_{k-1})+O(h)$, this one-step lag costs another $O(h)$ and does not change the order. For a trained network the estimate additionally carries the network's own error $v_\theta-u$, which we can only measure empirically.
+
+\paragraph{Resulting sampler.} Algorithm~\ref{alg:bendflow} states the sampler. There is no previous prediction at $k=0$, so $h_0$ is a fixed value. When the posterior has committed, $\dot m\to0$ and the rule would give $h\to\infty$; $h_{\max}$ and the remaining time prevent overshooting $t=1$. $h_{\min}$ prevents the sampler from stalling at a sharp bend. To compare against a uniform grid, we tune $\tol$ until the average step count equals that of the uniform grid. Each step costs one network evaluation, the same as plain Euler.
+
+\begin{algorithm}[t]
+\caption{Curvature-adaptive Euler sampler}\label{alg:bendflow}
+\begin{algorithmic}[1]
+\Require velocity model $v$, tolerance $\tol$, bounds $h_{\min}\le h_{\max}$, first step $h_0$
+\State $t_0\gets0$,\quad $x_0\sim\mathcal N(0,I)$,\quad $k\gets0$
+\While{$t_k<1$}
+  \State $v_k\gets v(x_k,t_k)$ and $\hat x_1^{(k)}\gets x_k+(1-t_k)\,v_k$
+  \If{$k\ge1$}
+    \State $\widehat{\dot m}_k\gets\big(\hat x_1^{(k)}-\hat x_1^{(k-1)}\big)/h_{k-1}$
+    \State $h_k\gets\sqrt{2(1-t_k)\,\tol/\|\widehat{\dot m}_k\|}$
+    \State clip $h_k$ to $[h_{\min},h_{\max}]$
+  \EndIf
+  \State $h_k\gets\min(h_k,\,1-t_k)$
+  \State $x_{k+1}\gets x_k+h_k\,v_k$,\quad $t_{k+1}\gets t_k+h_k$,\quad $k\gets k+1$
+\EndWhile
+\State \Return $x_k$
+\end{algorithmic}
+\end{algorithm}
+
+\section{Experiments}\label{sec:experiments}
+
+\todo{This section describes the planned experiments. No experiment has been run yet; every number, figure and conclusion below is a placeholder.}
+
+\subsection{Exact field on image data}
+\textbf{Setup.} MNIST and Fashion-MNIST training sets as the data distribution, with the exact field \eqref{eq:u} evaluated as a softmax-weighted average over all training images. CIFAR-10 if time and compute allow.\\
+\textbf{Questions.} (i) Do \eqref{eq:jac}, \eqref{eq:div} and \eqref{eq:mdot} hold numerically against finite differences? (ii) How loose are the bounds \eqref{eq:lam}--\eqref{eq:local} along real trajectories, and how large is the active set over time? (iii) Does $\|\dot m\|$ peak when a trajectory chooses between nearby images?\\
+\todo{Figure: $\|\dot m\|$ and its bound along sample trajectories. Figure: active-set size and $D_A$ over $t$.}
+
+\subsection{Trained models: U-Net and DiT}
+\textbf{Setup.} A small U-Net and a small Diffusion Transformer trained with conditional flow matching on the same data. \todo{architectures, parameter counts, optimiser, training length.}\\
+\textbf{Questions.} (i) Where and when does the denoised prediction of each network deviate from the exact $m$, i.e.\ where does the network smooth the data instead of memorising it? (ii) Does $\|\widehat{\dot m}\|$ of the trained networks peak where the exact field predicts? (iii) Do the two architectures differ in this respect?\\
+\todo{Figure: top eigenvalue of $\nabla_xv_\theta$ against \eqref{eq:eigrange}. Figure: $\|\widehat{\dot m}_k\|$ for U-Net, DiT and the exact field.}
+
+\subsection{Curvature-adaptive sampling}
+\textbf{Setup.} Algorithm~\ref{alg:bendflow} against a uniform Euler grid at matched numbers of function evaluations (NFE), with $\tol$ tuned to match the average step count.\\
+\todo{Table~\ref{tab:sampler}. Sample grids at 5, 10 and 20 NFE. FID on CIFAR-10 if available.}
+
+\begin{table}[t]
+\caption{Placeholder for the sampler comparison. \todo{fill in.}}\label{tab:sampler}
+\centering
+\begin{tabular}{llccc}
+\toprule
+Model & Sampler & NFE 5 & NFE 10 & NFE 20\\
+\midrule
+Exact field & Uniform Euler & -- & -- & --\\
+Exact field & BendFlow & -- & -- & --\\
+U-Net & Uniform Euler & -- & -- & --\\
+U-Net & BendFlow & -- & -- & --\\
+DiT & Uniform Euler & -- & -- & --\\
+DiT & BendFlow & -- & -- & --\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Related work}\label{sec:related}
+
+The connection between the Jacobian of the denoiser and the posterior covariance goes back to higher-order Tweedie formulas \citep{efron2011tweedie,manor2024posterior}; \citet{manor2024posterior} also relate the third posterior moment to spatial derivatives of the second, whereas Theorem~\ref{thm:mdot} relates it to the derivative along a trajectory. \citet{wan2024elucidating} state the Jacobian identity for general schedules and analyse how trajectories are attracted to and absorbed by local clusters of the data. \citet{lv2026uncertainty} derive the covariance and divergence identities for the linear interpolant and use them for uncertainty quantification. \citet{rao2026geometry} prove the acceleration identity \eqref{eq:acc} and use the accumulated acceleration as an uncertainty proxy for failure detection, not for choosing step sizes. \citet{milanfar2026lagrangian} argues qualitatively that the denoiser Jacobian is the source of trajectory curvature and of small solver steps. Global Lipschitz bounds on the velocity field are given by \citet{gao2024convergence} and \citet{benton2024error}; our bounds are local and depend on the active set.
+
+\section{Limitations and conclusion}\label{sec:conclusion}
+
+All statements are about the exact marginal field of a finite training set under the linear path. Sampling with that field reproduces training images, so it serves as a reference for memorisation and not as a generator. The bound \eqref{eq:local} is an upper bound and can be loose, in particular through the factor $\|\eps\|$ and the bound on $\kappa$. Proposition~\ref{prop:est} covers the exact field only, and the step-size rule controls the local error; we do not prove a bound on the global error. The novelty claims rest on a search of the closest literature and not on a proof that the results are absent elsewhere. \todo{conclusion once the experiments are done.}
+
+\section*{LLM Usage}
+Claude (Anthropic) was used to verify the derivations, to search for related work, and it introduced the notation $C$ and $\kappa$; $m$ is also the standard notation for the denoiser in the literature. The handwritten derivations are available in the repository.
+
+\begin{thebibliography}{99}
+
+\bibitem[Benton et~al.(2024)]{benton2024error}
+J.~Benton, G.~Deligiannidis, and A.~Doucet.
+\newblock Error bounds for flow matching methods.
+\newblock \emph{Transactions on Machine Learning Research}, 2024.
+\newblock arXiv:2305.16860.
+
+\bibitem[CSFlow(2026)]{csflow}
+% TODO: complete authors and title from the arXiv page.
+CSFlow.
+\newblock arXiv:2606.08833, 2026.
+
+\bibitem[Efron(2011)]{efron2011tweedie}
+B.~Efron.
+\newblock Tweedie's formula and selection bias.
+\newblock \emph{Journal of the American Statistical Association}, 106(496):1602--1614, 2011.
+
+\bibitem[Gao et~al.(2024)]{gao2024convergence}
+Y.~Gao, J.~Huang, Y.~Jiao, and S.~Zheng.
+\newblock Convergence of continuous normalizing flows for learning probability distributions.
+\newblock arXiv:2404.00551, 2024.
+
+\bibitem[Lipman et~al.(2023)]{lipman2023flow}
+Y.~Lipman, R.~T.~Q. Chen, H.~Ben-Hamu, M.~Nickel, and M.~Le.
+\newblock Flow matching for generative modeling.
+\newblock In \emph{International Conference on Learning Representations}, 2023.
+
+\bibitem[Lv et~al.(2026)]{lv2026uncertainty}
+L.~Lv, J.~Xing, X.~Liang, and J.~Wang.
+\newblock Uncertainty in a single pass: A closed-form identity for one-step flow matching.
+\newblock arXiv:2605.00941, 2026.
+
+\bibitem[Manor and Michaeli(2024)]{manor2024posterior}
+H.~Manor and T.~Michaeli.
+\newblock On the posterior distribution in denoising: Application to uncertainty quantification.
+\newblock arXiv:2309.13598, 2024.
+
+\bibitem[Milanfar(2026)]{milanfar2026lagrangian}
+P.~Milanfar.
+\newblock A Lagrangian view of flow matching.
+\newblock arXiv:2609.00198, 2026.
+
+\bibitem[Rao et~al.(2026)]{rao2026geometry}
+Z.~Rao, Y.~Zhao, W.~Guo, B.~Fei, Y.~Guo, and H.~Xiong.
+\newblock The geometry of flow-matching uncertainty: A cost-free uncertainty proxy and application in flow-based VLA failure detection.
+\newblock arXiv:2607.27933, 2026.
+
+\bibitem[Stable Velocity(2026)]{stablevelocity}
+% TODO: complete authors and title from the arXiv page.
+Stable Velocity.
+\newblock arXiv:2602.05435, 2026.
+
+\bibitem[Wan et~al.(2024)]{wan2024elucidating}
+Z.~Wan, Q.~Wang, G.~Mishne, and Y.~Wang.
+\newblock Elucidating flow matching ODE dynamics via data geometry and denoisers.
+\newblock arXiv:2412.18730, 2024.
+
+\end{thebibliography}
+
+\newpage
+\appendix
+
+\section{The marginal field}\label{app:marginal}
+
+We need to show that $u_t$ in \eqref{eq:u} is the marginal field. The marginalization theorem states that if $u_t(x\mid z)$ generates $p_t(x\mid z)$ for every $z$, then the posterior average $u_t(x)=\E_{z\sim p(\cdot\mid x_t=x)}[u_t(x\mid z)]$ and the marginal path $p_t(x)=\int p_t(x\mid z)\,q(z)\,dz$ satisfy the continuity equation $\partial_tp_t+\nabla\!\cdot(p_tu_t)=0$, and thus $u_t(x)$ generates $p_t(x)$ \citep{lipman2023flow}.
+
+For the training set as data distribution, $q=\frac1N\sum_i\delta_{\xn{i}}$ and $p_t(x\mid\xn{i})=\mathcal N(x;t\,\xn{i},(1-t)^2I)$. By Bayes' rule the posterior probability of image $i$ is proportional to $\frac1N\mathcal N(x;t\,\xn{i},(1-t)^2I)$; the factor $\frac1N$ and the common normalising constant of the Gaussians cancel, which leaves exactly $w_i$ in \eqref{eq:w}. Plugging $u_t(x\mid x_1)=\frac{x_1-x}{1-t}$ into the theorem,
+\[
+  u_t(x)=\E_{x_1\sim p(\cdot\mid x_t=x)}\big[u_t(x\mid x_1)\big]
+  =\sum_iw_i\,\frac{\xn{i}-x}{1-t}
+  =\frac{1}{1-t}\Big(\sum_iw_i\,\xn{i}-x\underbrace{\sum_iw_i}_{=1}\Big)
+  =\frac{m-x}{1-t}.
+\]
+
+\section{Symmetry and positive semi-definiteness of \texorpdfstring{$C$}{C}}\label{app:psd}
+
+\textbf{Symmetric.} $(aa^\top)^\top=(a^\top)^\top a^\top=aa^\top$, so $(\xn{i}-m)(\xn{i}-m)^\top$ is symmetric, and we only add such matrices with weights, so $C$ is symmetric.
+
+\textbf{Positive semi-definite.} For all $v\in\R^d$,
+\[
+  v^\top Cv=\sum_i\underbrace{w_i}_{\ge0}\underbrace{\big(v^\top(\xn{i}-m)\big)^2}_{\ge0}\ge0 .
+\]
+$C$ is not positive definite in general: if one image has all the weight then $C=0$.
+
+\section{Proof of Proposition~\ref{prop:jac}}\label{app:jac}
+
+Recall $m=\sum_iw_i\,\xn{i}$. To shorten the exponentials, let
+\[
+  g_i(x)=-\frac{\|x-t\,\xn{i}\|^2}{2(1-t)^2}
+  =-\frac{1}{2(1-t)^2}\Big(x^\top x-2t\,(\xn{i})^\top x+t^2(\xn{i})^\top\xn{i}\Big),
+  \qquad w_i=\frac{e^{g_i}}{\sum_je^{g_j}} .
+\]
+Here $t$ and $\xn{i}$ are constants, and $\nabla_x(x^\top x)=2x$, $\nabla_x(a^\top x)=a$, so
+\[
+  \nabla g_i(x)=-\frac{1}{2(1-t)^2}\big(2x-2t\,\xn{i}\big)=-\frac{x-t\,\xn{i}}{(1-t)^2}.
+\]
+We also need $\nabla w_i$. Since $w_i>0$, $\log w_i=g_i-\log\big(\sum_je^{g_j}\big)$ and $\nabla\log w_i=\frac{\nabla w_i}{w_i}$, so $\frac{\nabla w_i}{w_i}=\nabla g_i-\nabla\log\big(\sum_je^{g_j}\big)$. Now
+\[
+  \nabla\log\Big(\sum_je^{g_j}\Big)=\frac{\nabla\big(\sum_je^{g_j}\big)}{\sum_ke^{g_k}}
+  =\frac{\sum_je^{g_j}\nabla g_j}{\sum_ke^{g_k}}
+  =\sum_j\Big(\frac{e^{g_j}}{\sum_ke^{g_k}}\Big)\nabla g_j=\sum_jw_j\nabla g_j,
+\]
+which we plug back in to get $\nabla w_i=w_i\big(\nabla g_i-\sum_jw_j\nabla g_j\big)$. Since $\sum_jw_j=1$ and $m=\sum_jw_j\,\xn{j}$,
+\begin{align*}
+  \nabla g_i-\sum_jw_j\nabla g_j
+  &=\frac{t\,\xn{i}-x}{(1-t)^2}-\sum_jw_j\Big(\frac{t\,\xn{j}-x}{(1-t)^2}\Big)
+   =\frac{1}{(1-t)^2}\Big(t\,\xn{i}-x-\sum_jw_j(t\,\xn{j}-x)\Big)\\
+  &=\frac{1}{(1-t)^2}\big(t\,\xn{i}-x-t\,m+x\big)=\frac{t}{(1-t)^2}\,(\xn{i}-m).
+\end{align*}
+So $\nabla w_i=\frac{t}{(1-t)^2}\,w_i\,(\xn{i}-m)$, which we substitute in $\nabla_xm=\sum_i\xn{i}(\nabla w_i)^\top$ to get
+\[
+  \nabla_xm=\sum_i\xn{i}\Big(\frac{t}{(1-t)^2}\,w_i\,(\xn{i}-m)\Big)^\top
+  =\frac{t}{(1-t)^2}\sum_iw_i\,\xn{i}(\xn{i}-m)^\top .
+\]
+Notice that the weighted sum of deviations from the mean is zero:
+\[
+  \sum_iw_i\,(\xn{i}-m)=\sum_iw_i\,\xn{i}-m\sum_iw_i=m-m=0 .
+\]
+Therefore $\sum_iw_i\,m\,(\xn{i}-m)^\top=0$, and subtracting this zero matrix does not change the value, so
+\[
+  \nabla_xm=\frac{t}{(1-t)^2}\sum_iw_i\,(\xn{i}-m)(\xn{i}-m)^\top=\frac{t}{(1-t)^2}\,C .
+\]
+With $\nabla_xu_t=\frac{1}{1-t}\nabla_xm-\frac{1}{1-t}I$ this gives \eqref{eq:jac}. \qed
+
+\section{Proof of Theorem~\ref{thm:mdot}}\label{app:mdot}
+
+Fix a trajectory $x=x_t$ with $\dot x=u_t(x)$ and write a dot for the total derivative $\frac{d}{dt}$ along it. As before, $w_i=e^{g_i}/\sum_je^{g_j}$ and $g_i=-\frac{\|x-t\,\xn{i}\|^2}{2r^2}$ with $r=1-t$. Since the training points are constant, $\dot m=\sum_i\dot w_i\,\xn{i}$, and differentiating $\log w_i=g_i-\log\sum_je^{g_j}$ in time gives the same softmax rule as for the spatial gradient,
+\[
+  \dot w_i=w_i\Big(\dot g_i-\sum_jw_j\,\dot g_j\Big).
+\]
+Denote $\bar g=\sum_jw_j\,\dot g_j$; hence $\dot m=\sum_iw_i\,\xn{i}(\dot g_i-\bar g)$. Since $\sum_iw_i(\dot g_i-\bar g)=0$, we may subtract $m$ times this zero:
+\[
+  \dot m=\sum_iw_i\,(\xn{i}-m)(\dot g_i-\bar g)=\sum_iw_i\,(\xn{i}-m)\,\dot g_i ,
+\]
+where the last step uses $\sum_iw_i(\xn{i}-m)=0$. Any part of $\dot g_i$ that does not depend on $i$ contributes nothing to $\dot m$, so we only need to track the $i$-dependent part of $\dot g_i$.
+
+Recall $\frac{d}{dt}\frac{1}{2r^2}=\frac{1}{r^3}$ and $\frac{d}{dt}(x-t\,\xn{i})=u-\xn{i}$. Then
+\begin{align*}
+  \dot g_i&=-\frac{(x-t\,\xn{i})\cdot(u-\xn{i})}{r^2}-\frac{\|x-t\,\xn{i}\|^2}{r^3}\\
+  &=\frac{x\cdot\xn{i}+t\,u\cdot\xn{i}-t\|\xn{i}\|^2}{r^2}+\frac{2t\,x\cdot\xn{i}-t^2\|\xn{i}\|^2}{r^3}
+   +\underbrace{\Big[-\frac{x\cdot u}{r^2}-\frac{\|x\|^2}{r^3}\Big]}_{\text{does not depend on }i}.
+\end{align*}
+Collecting the part linear in $\xn{i}$ and the quadratic part,
+\[
+  \dot g_i=\xn{i}\cdot\underbrace{\Big[\frac{x+t\,u}{r^2}+\frac{2t\,x}{r^3}\Big]}_{=:\,b}
+  +\|\xn{i}\|^2\Big[-\frac{t}{r^2}-\frac{t^2}{r^3}\Big]
+  +\Big[-\frac{x\cdot u}{r^2}-\frac{\|x\|^2}{r^3}\Big].
+\]
+Simplifying $b$ using $r+2t=1+t$, and the quadratic coefficient using $r+t=1$:
+\[
+  b=\frac{r(x+t\,u)+2t\,x}{r^3}=\frac{(1+t)\,x+t\,r\,u}{r^3},\qquad
+  -\frac{t}{r^2}-\frac{t^2}{r^3}=-\frac{t\,r+t^2}{r^3}=-\frac{t(r+t)}{r^3}=-\frac{t}{r^3}.
+\]
+Substituting the above into $\dot m$:
+\[
+  \dot m=\Big(\sum_iw_i\,(\xn{i}-m)(\xn{i})^\top\Big)b-\frac{t}{r^3}\sum_iw_i\,(\xn{i}-m)\,\|\xn{i}\|^2 .
+\]
+For the first sum, $(\xn{i})^\top=(\xn{i}-m)^\top+m^\top$, where the $m^\top$ part gives $\big(\sum_iw_i(\xn{i}-m)\big)m^\top=0$, so the first sum equals $C$. For the second sum, let $\delta_i=\xn{i}-m$, so that $\sum_iw_i\delta_i=0$ and $\|\xn{i}\|^2=\|m\|^2+2\,\delta_i^\top m+\|\delta_i\|^2$. Then
+\[
+  \sum_iw_i\,\delta_i\,\|\xn{i}\|^2
+  =\underbrace{\Big(\sum_iw_i\delta_i\Big)}_{=0}\|m\|^2
+  +2\underbrace{\sum_iw_i\,\delta_i\delta_i^\top}_{=C}\,m
+  +\underbrace{\sum_iw_i\,\|\delta_i\|^2\delta_i}_{=\kappa}
+  =2\,Cm+\kappa .
+\]
+Therefore
+\[
+  \dot m=Cb-\frac{t}{r^3}\big(2\,Cm+\kappa\big)=C\Big(b-\frac{2t\,m}{r^3}\Big)-\frac{t\,\kappa}{r^3}.
+\]
+Finally, since $r\,u=m-x$, we have $t\,r\,u=t\,m-t\,x$, and
+\[
+  b-\frac{2t\,m}{r^3}=\frac{(1+t)\,x+t\,m-t\,x-2t\,m}{r^3}=\frac{x-t\,m}{r^3}=\frac{r\,\eps}{r^3}=\frac{\eps}{r^2},
+\]
+which gives $\dot m=\frac{C\eps}{(1-t)^2}-\frac{t\kappa}{(1-t)^3}$, and with $\ddot x=\frac{\dot m}{1-t}$ the second formula in \eqref{eq:mdot}. \qed
+
+\section{Proofs of the local bounds}\label{app:bounds}
+
+\begin{proof}[Proof of Lemma~\ref{lem:tail}]
+From $w_i=e^{g_i}/\sum_je^{g_j}$ we get $\frac{w_i}{w_{i^\star}}=e^{g_i-g_{i^\star}}$. For $i\notin A$, $g_i-g_{i^\star}<-\log\frac N\delta$, so $w_i<w_{i^\star}\cdot\frac\delta N\le\frac\delta N$. There are at most $N$ such points, so their total weight is at most $N\cdot\frac\delta N=\delta$.
+\end{proof}
+
+\begin{proof}[Proof of \eqref{eq:lam}]
+For a fixed unit vector $v\in\R^d$, $v^\top Cv=\sum_iw_i\big(v\cdot(\xn{i}-m)\big)^2$, which is the weighted variance of the numbers $v\cdot\xn{i}$. A variance is the smallest mean squared deviation, so for any point $c\in\R^d$,
+\[
+  \sum_iw_i\big(v\cdot(\xn{i}-m)\big)^2\le\sum_iw_i\big(v\cdot(\xn{i}-c)\big)^2,
+\]
+because the right-hand side equals the left-hand side plus $\big(v\cdot(m-c)\big)^2$. Choice of $c$: among the active images, let $\xn{a}$ have the smallest value of $v\cdot\xn{i}$ and $\xn{b}$ the largest, and take $c=\frac12(\xn{a}+\xn{b})$, so every active image is within half the active spread of $c$.
+
+\emph{Case 1} ($i\in A$): $v\cdot\xn{i}\in[v\cdot\xn{a},v\cdot\xn{b}]$, so $|v\cdot(\xn{i}-c)|\le\frac12|v\cdot(\xn{b}-\xn{a})|\le\frac{D_A}{2}$.
+
+\emph{Case 2} ($i\notin A$): $|v\cdot(\xn{i}-c)|\le\|\xn{i}-c\|\le\frac12\|\xn{i}-\xn{a}\|+\frac12\|\xn{i}-\xn{b}\|\le D$.
+
+Using $\sum_{i\in A}w_i\le1$ and $\sum_{i\notin A}w_i\le\delta$,
+\[
+  v^\top Cv\le\sum_{i\in A}w_i\frac{D_A^2}{4}+\sum_{i\notin A}w_iD^2\le\frac{D_A^2}{4}+\delta D^2 .
+\]
+This holds for every unit $v$, and $\lmax(C)=\max_{\|v\|=1}v^\top Cv$.
+\end{proof}
+
+\begin{proof}[Proof of \eqref{eq:kap}]
+Write $\delta_i=\xn{i}-m$. By the triangle inequality, $\|\kappa\|=\big\|\sum_iw_i\|\delta_i\|^2\delta_i\big\|\le\sum_iw_i\|\delta_i\|^3$, so we need to know how far each image is from $m$. Since $\sum_jw_j=1$, we can write $\xn{i}-m=\sum_jw_j(\xn{i}-\xn{j})$. For $i\notin A$: $\|\delta_i\|\le\sum_jw_jD=D$. For $i\in A$: $\|\delta_i\|\le\sum_{j\in A}w_jD_A+\sum_{j\notin A}w_jD\le D_A+\delta D$. Splitting the sum over $i$ in the same way,
+\[
+  \|\kappa\|\le\sum_{i\in A}w_i(D_A+\delta D)^3+\sum_{i\notin A}w_iD^3\le(D_A+\delta D)^3+\delta D^3 .\qedhere
+\]
+\end{proof}
+
+\begin{proof}[Proof of \eqref{eq:local}]
+Using $\|C\eps\|\le\lmax(C)\,\|\eps\|$ in \eqref{eq:mdot},
+\[
+  \|\dot m\|\le\frac{\lmax(C)\,\|\eps\|}{(1-t)^2}+\frac{t\,\|\kappa\|}{(1-t)^3},
+\]
+and inserting the upper bounds \eqref{eq:lam} and \eqref{eq:kap} gives \eqref{eq:local}.
+\end{proof}
+
+\section{Proof of Proposition~\ref{prop:est}}\label{app:est}
+
+Let $h=h_{k-1}$, let $x(t)$ be the exact trajectory through $x_{k-1}$, and let $M(t)=m_t(x(t))$, so that $\dot M=\dot m$ and $\hat x_1^{(k-1)}=M(t_{k-1})$. The estimate differs from $\dot M(t_{k-1})$ for two reasons.
+
+\emph{(1)} $x_k$ was produced by an Euler step, so it is not necessarily on the exact trajectory. By the local error formula \eqref{eq:euler}, $x_k=x(t_k)+e$ with $\|e\|=O(h^2)$. Expanding $m$ in space around $x(t_k)$,
+\[
+  m_{t_k}(x_k)=M(t_k)+\nabla_xm\;e+O(\|e\|^2),
+\]
+where $\nabla_xm=\frac{t}{(1-t)^2}C$ and $\lmax(C)\le D^2$ for a finite training set, hence $m_{t_k}(x_k)=M(t_k)+O(h^2)$.
+
+\emph{(2)} A difference quotient is not a derivative, and Taylor in time gives $M(t_k)=M(t_{k-1})+h\,\dot M(t_{k-1})+O(h^2)$.
+
+Combining both,
+\[
+  \widehat{\dot m}_k=\frac{M(t_k)+O(h^2)-M(t_{k-1})}{h}=\frac{h\,\dot M(t_{k-1})+O(h^2)}{h}=\dot m(t_{k-1})+O(h). \qed
+\]
+
+\section{Additional experimental details}\label{app:details}
+
+\todo{Hyperparameters, compute, and the numerical checks of \eqref{eq:jac}, \eqref{eq:div}, \eqref{eq:mdot} and Theorem~\ref{thm:local} against finite differences.}
+
+\end{document}
