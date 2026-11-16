@@ -266,7 +266,7 @@ The proof is in Appendix~\ref{app:est}. The estimate describes time $t_{k-1}$ bu
 \todo{Figure: $\|\dot m\|$ and its bound along sample trajectories. Figure: active-set size and $D_A$ over $t$.}
 
 \subsection{Trained models: U-Net and DiT}
-\textbf{Setup.} A small U-Net and a small Diffusion Transformer trained with conditional flow matching on the same data. \todo{architectures, parameter counts, optimiser, training length.}\\
+\textbf{Setup.} A small U-Net and a small Diffusion Transformer trained with conditional flow matching on the same data. The architectures and parameter counts are given in Appendices~\ref{app:unet} and~\ref{app:dit}. \todo{optimiser, training length.}\\
 \textbf{Questions.} (i) Where and when does the denoised prediction of each network deviate from the exact $m$, i.e.\ where does the network smooth the data instead of memorising it? (ii) Does $\|\widehat{\dot m}\|$ of the trained networks peak where the exact field predicts? (iii) Do the two architectures differ in this respect?\\
 \todo{Figure: top eigenvalue of $\nabla_xv_\theta$ against \eqref{eq:eigrange}. Figure: $\|\widehat{\dot m}_k\|$ for U-Net, DiT and the exact field.}
 
@@ -304,6 +304,11 @@ Claude (Anthropic) was used to verify the derivations, to search for related wor
 
 \begin{thebibliography}{99}
 
+\bibitem[Ba et~al.(2016)]{ba2016layernorm}
+J.~L. Ba, J.~R. Kiros, and G.~E. Hinton.
+\newblock Layer normalization.
+\newblock arXiv:1607.06450, 2016.
+
 \bibitem[Benton et~al.(2024)]{benton2024error}
 J.~Benton, G.~Deligiannidis, and A.~Doucet.
 \newblock Error bounds for flow matching methods.
@@ -325,6 +330,16 @@ Y.~Gao, J.~Huang, Y.~Jiao, and S.~Zheng.
 \newblock Convergence of continuous normalizing flows for learning probability distributions.
 \newblock arXiv:2404.00551, 2024.
 
+\bibitem[Hendrycks and Gimpel(2016)]{hendrycks2016gelu}
+D.~Hendrycks and K.~Gimpel.
+\newblock Gaussian error linear units (GELUs).
+\newblock arXiv:1606.08415, 2016.
+
+\bibitem[Ho et~al.(2020)]{ho2020ddpm}
+J.~Ho, A.~Jain, and P.~Abbeel.
+\newblock Denoising diffusion probabilistic models.
+\newblock In \emph{Advances in Neural Information Processing Systems}, 2020.
+
 \bibitem[Lipman et~al.(2023)]{lipman2023flow}
 Y.~Lipman, R.~T.~Q. Chen, H.~Ben-Hamu, M.~Nickel, and M.~Le.
 \newblock Flow matching for generative modeling.
@@ -345,20 +360,50 @@ P.~Milanfar.
 \newblock A Lagrangian view of flow matching.
 \newblock arXiv:2609.00198, 2026.
 
+\bibitem[Peebles and Xie(2023)]{peebles2023dit}
+W.~Peebles and S.~Xie.
+\newblock Scalable diffusion models with transformers.
+\newblock In \emph{International Conference on Computer Vision}, 2023.
+
 \bibitem[Rao et~al.(2026)]{rao2026geometry}
 Z.~Rao, Y.~Zhao, W.~Guo, B.~Fei, Y.~Guo, and H.~Xiong.
 \newblock The geometry of flow-matching uncertainty: A cost-free uncertainty proxy and application in flow-based VLA failure detection.
 \newblock arXiv:2607.27933, 2026.
+
+\bibitem[Rombach et~al.(2022)]{rombach2022ldm}
+R.~Rombach, A.~Blattmann, D.~Lorenz, P.~Esser, and B.~Ommer.
+\newblock High-resolution image synthesis with latent diffusion models.
+\newblock In \emph{Conference on Computer Vision and Pattern Recognition}, 2022.
+
+\bibitem[Ronneberger et~al.(2015)]{ronneberger2015unet}
+O.~Ronneberger, P.~Fischer, and T.~Brox.
+\newblock U-Net: Convolutional networks for biomedical image segmentation.
+\newblock In \emph{Medical Image Computing and Computer-Assisted Intervention}, 2015.
 
 \bibitem[Stable Velocity(2026)]{stablevelocity}
 % TODO: complete authors and title from the arXiv page.
 Stable Velocity.
 \newblock arXiv:2602.05435, 2026.
 
+\bibitem[Su et~al.(2021)]{su2021roformer}
+J.~Su, Y.~Lu, S.~Pan, A.~Murtadha, B.~Wen, and Y.~Liu.
+\newblock RoFormer: Enhanced transformer with rotary position embedding.
+\newblock arXiv:2104.09864, 2021.
+
+\bibitem[Vaswani et~al.(2017)]{vaswani2017attention}
+A.~Vaswani, N.~Shazeer, N.~Parmar, J.~Uszkoreit, L.~Jones, A.~N. Gomez, {\L}.~Kaiser, and I.~Polosukhin.
+\newblock Attention is all you need.
+\newblock In \emph{Advances in Neural Information Processing Systems}, 2017.
+
 \bibitem[Wan et~al.(2024)]{wan2024elucidating}
 Z.~Wan, Q.~Wang, G.~Mishne, and Y.~Wang.
 \newblock Elucidating flow matching ODE dynamics via data geometry and denoisers.
 \newblock arXiv:2412.18730, 2024.
+
+\bibitem[Wu and He(2018)]{wu2018groupnorm}
+Y.~Wu and K.~He.
+\newblock Group normalization.
+\newblock In \emph{European Conference on Computer Vision}, 2018.
 
 \end{thebibliography}
 
@@ -533,6 +578,167 @@ Combining both,
 \[
   \widehat{\dot m}_k=\frac{M(t_k)+O(h^2)-M(t_{k-1})}{h}=\frac{h\,\dot M(t_{k-1})+O(h^2)}{h}=\dot m(t_{k-1})+O(h). \qed
 \]
+
+\section{U-Net architecture}\label{app:unet}
+
+This appendix and the next specify the two networks of Section~\ref{sec:experiments} completely. All numbers are the values in \texttt{configs/networks.toml} of the repository.
+
+\paragraph{Shared conventions.} Both networks are velocity models $v_\theta(x,t)$: they receive a noisy image and a time and return a velocity of the same shape. The flat vector $x\in\R^d$ of Section~\ref{sec:setup} is reshaped to $c\times S\times S$ with $d=cS^2$, where $c=1$, $S=28$ for MNIST and Fashion-MNIST and $c=3$, $S=32$ for CIFAR-10. Pixel values are scaled to $[-1,1]$.
+
+Both networks work in pixel space; there is no autoencoder and no latent space \citep{rombach2022ldm}. There are two reasons. The images are small, so pixel space is affordable: with patch size $p=2$ a $28\times28$ image gives $196$ tokens. More importantly, the exact field \eqref{eq:u} is defined by the training images themselves, and its trajectories end on them. A network trained on latents $E(\xn{i})$ would have to be compared with the exact field of the encoded training set, and the decoder would add a second source of error that cannot be separated from the error of the flow.
+
+Both networks are unconditional. The only side input is the time $t$, so there is no class or text embedding, no cross-attention and no in-context conditioning token. Neither network uses dropout.
+
+\paragraph{Time embedding.} The scalar $t\in[0,1]$ is first expanded by a fixed sinusoidal embedding of even width $d_e$. With $s=1000\,t$ and $\omega_j=10000^{-2j/d_e}$ for $j=0,\dots,\frac{d_e}{2}-1$,
+$$
+  \phi(t)=\big[\cos(\omega_0s),\dots,\cos(\omega_{d_e/2-1}s),\ \sin(\omega_0s),\dots,\sin(\omega_{d_e/2-1}s)\big]\in\R^{d_e}.
+$$
+This is the usual embedding up to the order of the entries. A two-layer MLP then gives the time vector
+$$
+  e=W_2\,\mathrm{SiLU}\big(W_1\,\phi(t)+b_1\big)+b_2\in\R^{d_e},\qquad \mathrm{SiLU}(z)=\frac{z}{1+e^{-z}},
+$$
+with both layers of width $d_e$. The U-Net uses $d_e=128$. The DiT of Appendix~\ref{app:dit} uses the same construction with $d_e$ equal to its token width.
+
+\paragraph{Residual block.} The U-Net is built from residual blocks. A block with $c_{\mathrm{in}}$ input and $c_{\mathrm{out}}$ output channels maps a feature map $z$ and the time vector $e$ to
+\begin{align*}
+  a&=\mathrm{Conv}_{3\times3}\big(\mathrm{SiLU}(\mathrm{GN}(z))\big)+W_e\,e+b_e,\\
+  z'&=\mathrm{Conv}_{3\times3}\big(\mathrm{SiLU}(\mathrm{GN}(a))\big)+\mathrm{skip}(z).
+\end{align*}
+$\mathrm{GN}$ is group normalisation \citep{wu2018groupnorm} with $8$ groups, $\epsilon=10^{-5}$ and a learned scale and shift per channel. Both convolutions have stride $1$ and zero padding $1$, so the resolution is kept. $W_e\in\R^{c_{\mathrm{out}}\times d_e}$ is a linear layer whose output is added to every spatial position, which is how the block is told the noise level. $\mathrm{skip}$ is the identity if $c_{\mathrm{in}}=c_{\mathrm{out}}$ and a $1\times1$ convolution otherwise. The activation function is SiLU everywhere in the U-Net.
+
+\paragraph{Self-attention block.} One self-attention block sits at the lowest resolution, where the feature map has $c_z=64$ channels. After group normalisation the $S'\times S'$ positions are read as $S'^2$ tokens $Z\in\R^{S'^2\times c_z}$ ($49$ tokens for MNIST, $64$ for CIFAR-10), and
+$$
+  Q=ZW_Q,\quad K=ZW_K,\quad V=ZW_V,\qquad
+  \mathrm{Attn}(Z)=\mathrm{softmax}\Big(\frac{QK^\top}{\sqrt{c_z}}\Big)V\,W_O,
+$$
+with the softmax taken over each row. This is scaled dot-product self-attention \citep{vaswani2017attention} with a single head, key dimension $c_z$, no bias terms and no mask, so every position attends to every other position. The result is reshaped to a feature map and added to the input of the block. There is no MLP after the attention and no positional embedding; the convolutions around it carry the position.
+
+\paragraph{Layout.} Table~\ref{tab:unet} lists the network for $c=1$, $S=28$. The base width is $32$ channels and the three resolutions use $32$, $64$ and $64$ channels (multipliers $1,2,2$). The contracting path has one residual block per resolution; the expanding path has two. Downsampling is a $3\times3$ convolution with stride $2$ and padding $1$, which halves the resolution ($28\to14\to7$, and $32\to16\to8$ for CIFAR-10). Upsampling is nearest-neighbour interpolation to the resolution of the next skip connection followed by a $3\times3$ convolution. Skip connections concatenate along the channel axis: the output of the first convolution, of every residual block of the contracting path and of every downsampling convolution is stored, and each residual block of the expanding path receives its input concatenated with the most recently stored map that has not been used yet. This is why the expanding blocks in Table~\ref{tab:unet} have $128$, $96$ or $64$ input channels.
+
+\begin{table}[h]
+\caption{The U-Net for a $1\times28\times28$ input. ``Res'' is the residual block and ``Attn'' the self-attention block defined above. For the expanding path the input channels include the concatenated skip connection.}\label{tab:unet}
+\centering
+\begin{tabular}{llll}
+\toprule
+Stage & Resolution & Operation & Channels\\
+\midrule
+Input & $28$ & Conv $3\times3$ & $1\to32$\\
+Down 1 & $28$ & Res & $32\to32$\\
+ & $28\to14$ & Conv $3\times3$, stride $2$ & $32\to32$\\
+Down 2 & $14$ & Res & $32\to64$\\
+ & $14\to7$ & Conv $3\times3$, stride $2$ & $64\to64$\\
+Down 3 & $7$ & Res & $64\to64$\\
+Middle & $7$ & Res, Attn, Res & $64\to64$\\
+Up 3 & $7$ & Res, Res & $128\to64$, $128\to64$\\
+ & $7\to14$ & nearest upsampling, Conv $3\times3$ & $64\to64$\\
+Up 2 & $14$ & Res, Res & $128\to64$, $96\to64$\\
+ & $14\to28$ & nearest upsampling, Conv $3\times3$ & $64\to64$\\
+Up 1 & $28$ & Res, Res & $96\to32$, $64\to32$\\
+Output & $28$ & GN, SiLU, Conv $3\times3$ & $32\to1$\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Initialisation and size.} The weights and biases of every linear and convolutional layer are drawn uniformly from $\big[-\frac{1}{\sqrt{n_{\mathrm{in}}}},\frac{1}{\sqrt{n_{\mathrm{in}}}}\big]$, where $n_{\mathrm{in}}$ is the number of inputs of one output unit. The only exception is the last convolution, whose weight and bias start at zero, so the untrained network returns $v_\theta=0$. The network has $11$ residual blocks, one attention block and $1{,}074{,}529$ parameters for MNIST ($1{,}075{,}683$ for CIFAR-10).
+
+\paragraph{Relation to the original U-Net.} The contracting path, the expanding path and the skip connections that let detail bypass the bottleneck are those of \citet{ronneberger2015unet}. The rest follows the U-Nets used for diffusion models \citep{ho2020ddpm}: residual blocks with group normalisation and SiLU in place of plain convolutions with ReLU, strided convolutions in place of max pooling, interpolation followed by a convolution in place of transposed convolutions, padded convolutions so that no cropping is needed, a time input in every block, and self-attention at the lowest resolution.
+
+\section{Diffusion Transformer architecture}\label{app:dit}
+
+The second network is a Diffusion Transformer (DiT) \citep{peebles2023dit}. The conventions, the time embedding and the SiLU activation are those of Appendix~\ref{app:unet}. Table~\ref{tab:dit} collects the sizes.
+
+\paragraph{Patchify and token embedding.} The image $x\in\R^{c\times S\times S}$ is cut into non-overlapping $p\times p$ patches with $p=2$. Each patch is flattened to a vector of $p^2c$ numbers and mapped by one linear layer with bias to a token of width $d_{\mathrm{tok}}=192$. This gives $n=(S/p)^2$ tokens: $196$ for $S=28$ and $256$ for $S=32$. No autoencoder precedes this step; the patches are patches of pixels.
+
+Doubling the patch size to $p=4$ would give four times fewer tokens ($49$ for $S=28$) and sixteen times fewer attention pairs per layer, but every token would then have to produce $16$ pixels through the single linear layer at the output.
+
+\paragraph{Positional embedding.} Self-attention is permutation equivariant, so the position of a patch has to enter the network somewhere. We use a two-dimensional rotary positional embedding (RoPE) \citep{su2021roformer}. Nothing is added to the tokens,
+$$
+  Z^{(0)}=\mathrm{patchify}(x)\,W_{\mathrm{emb}}+b_{\mathrm{emb}}\in\R^{n\times d_{\mathrm{tok}}},
+$$
+and the position enters inside every attention layer instead, through a rotation of the queries and keys that is defined in the paragraph on attention below. RoPE has no parameters. There is no class token.
+
+\paragraph{Modulation vector.} The time embedding of Appendix~\ref{app:unet} with $d_e=d_{\mathrm{tok}}=192$ gives the modulation vector $e\in\R^{192}$. It is computed once per evaluation and read by every block.
+
+\paragraph{Multi-head self-attention.} All attention in the DiT is multi-head scaled dot-product self-attention \citep{vaswani2017attention} over the $n$ image tokens, with $n_h=6$ heads of dimension $d_h=d_{\mathrm{tok}}/n_h=32$. For tokens $Z\in\R^{n\times d_{\mathrm{tok}}}$ and head $j$,
+$$
+  Q_j=ZW_Q^{j}+b_Q^{j},\qquad K_j=ZW_K^{j}+b_K^{j},\qquad V_j=ZW_V^{j}+b_V^{j},
+$$
+with $W_Q^j,W_K^j,W_V^j\in\R^{d_{\mathrm{tok}}\times d_h}$.
+
+The positions enter here. Let token $i$ lie in row $r_i$ and column $c_i$ of the $(S/p)\times(S/p)$ grid of patches, both counted from $0$. Row $i$ of $Q_j$ and row $i$ of $K_j$ are each split into $d_h/2=16$ consecutive pairs of entries, and every pair $(a,b)$ is rotated in its plane,
+$$
+  (a,b)\mapsto(a\cos\theta-b\sin\theta,\ a\sin\theta+b\cos\theta).
+$$
+With $\omega_k=10000^{-k/(d_h/4)}$ for $k=0,\dots,\frac{d_h}{4}-1$, pair $k$ is rotated by $\theta=r_i\,\omega_k$ and pair $\frac{d_h}{4}+k$ by $\theta=c_i\,\omega_k$, so one half of every head encodes the row and the other half the column. The values $V_j$ are not rotated. Writing $\tilde Q_j$ and $\tilde K_j$ for the rotated matrices,
+$$
+  A_j=\mathrm{softmax}\Big(\frac{\tilde Q_j\tilde K_j^\top}{\sqrt{d_h}}\Big)V_j\in\R^{n\times d_h},
+$$
+with the softmax over each row. Rotations of the same plane compose by adding their angles, so the inner product of the rotated query of token $i$ and the rotated key of token $i'$ depends on the positions only through $r_i-r_{i'}$ and $c_i-c_{i'}$: the attention weights see relative position. The heads are concatenated and mapped by an output layer,
+$$
+  \mathrm{MHSA}(Z)=[A_1,\dots,A_{n_h}]\,W_O+b_O\in\R^{n\times d_{\mathrm{tok}}}.
+$$
+There is no mask, so every token attends to all $n$ tokens, at a cost of $n^2$ pairs per head. Since the network is unconditional, there is no cross-attention.
+
+\paragraph{MLP.} The MLP of a block acts on each token separately and has two layers with one hidden layer of width $4\,d_{\mathrm{tok}}=768$:
+$$
+  \mathrm{MLP}(z)=W_b\,\mathrm{GELU}(W_a z+b_a)+b_b,\qquad W_a\in\R^{768\times192},\ W_b\in\R^{192\times768}.
+$$
+GELU \citep{hendrycks2016gelu} is used in its $\tanh$ approximation, $\mathrm{GELU}(z)\approx\frac z2\big(1+\tanh\big(\sqrt{2/\pi}\,(z+0.044715\,z^3)\big)\big)$.
+
+\paragraph{One block.} A standard pre-norm transformer block is
+$$
+  Z\leftarrow Z+\mathrm{MHSA}(\mathrm{LN}(Z)),\qquad Z\leftarrow Z+\mathrm{MLP}(\mathrm{LN}(Z)),
+$$
+with layer normalisation $\mathrm{LN}$ \citep{ba2016layernorm} applied to each token. The DiT block keeps this structure and adds two things to each of the two residual branches, both driven by the modulation vector. One linear layer per block produces six vectors of width $d_{\mathrm{tok}}$,
+$$
+  (\gamma_1,\beta_1,\alpha_1,\gamma_2,\beta_2,\alpha_2)=W_{\mathrm{mod}}\,\mathrm{SiLU}(e)+b_{\mathrm{mod}}\in\R^{6\,d_{\mathrm{tok}}},
+$$
+and the block computes
+\begin{align*}
+  Z&\leftarrow Z+\alpha_1\odot\mathrm{MHSA}\big((1+\gamma_1)\odot\mathrm{LN}(Z)+\beta_1\big),\\
+  Z&\leftarrow Z+\alpha_2\odot\mathrm{MLP}\big((1+\gamma_2)\odot\mathrm{LN}(Z)+\beta_2\big),
+\end{align*}
+where $\odot$ multiplies each token entrywise by the same vector.
+
+\emph{(1) Scale and shift (adaptive layer norm).} $\mathrm{LN}$ here only standardises each token to zero mean and unit variance over its $d_{\mathrm{tok}}$ entries ($\epsilon=10^{-5}$) and has no learned scale or shift of its own. The scale $1+\gamma$ and the shift $\beta$ come from the time instead, so every block can rescale its features for the current noise level. This replaces feeding $t$ to the first layer only.
+
+\emph{(2) Gate.} The output of each residual branch is multiplied by $\alpha$ before it is added back. $W_{\mathrm{mod}}$ and $b_{\mathrm{mod}}$ start at zero, so at initialisation $\gamma=\beta=\alpha=0$, both branches contribute nothing and every block is the identity. In our implementation, as in \citet{peebles2023dit}, $\alpha$ is a vector with one entry per channel and not a single scalar.
+
+Together these two additions are the adaLN-Zero block of \citet{peebles2023dit}. The network has $6$ such blocks.
+
+\paragraph{Output layer.} After the last block, the tokens are normalised and modulated once more, without a gate, and mapped back to patches:
+$$
+  (\beta_{\mathrm{out}},\gamma_{\mathrm{out}})=W'_{\mathrm{mod}}\,\mathrm{SiLU}(e)+b'_{\mathrm{mod}}\in\R^{2\,d_{\mathrm{tok}}},
+$$
+$$
+  Y=\big((1+\gamma_{\mathrm{out}})\odot\mathrm{LN}(Z)+\beta_{\mathrm{out}}\big)W_{\mathrm{out}}+b_{\mathrm{out}}\in\R^{n\times p^2c}.
+$$
+Each row of $Y$ is reshaped to a $p\times p$ patch with $c$ channels and the patches are put back in place, which gives the velocity in the shape of $x$. $W'_{\mathrm{mod}}$, $b'_{\mathrm{mod}}$, $W_{\mathrm{out}}$ and $b_{\mathrm{out}}$ start at zero, so the untrained network returns $v_\theta=0$, like the U-Net.
+
+\paragraph{Initialisation and size.} Apart from the zero-initialised layers named above, all linear layers are initialised as in Appendix~\ref{app:unet}. The network has $4{,}148{,}548$ parameters for MNIST ($4{,}151{,}628$ for CIFAR-10).
+
+\begin{table}[h]
+\caption{Sizes of the DiT.}\label{tab:dit}
+\centering
+\begin{tabular}{ll}
+\toprule
+Quantity & Value\\
+\midrule
+Patch size $p$ & $2$\\
+Tokens $n$ & $196$ ($S=28$), $256$ ($S=32$)\\
+Token width $d_{\mathrm{tok}}$ & $192$\\
+Blocks & $6$\\
+Attention heads $n_h$, head dimension $d_h$ & $6$, $32$\\
+MLP layers, hidden width & $2$, $768$\\
+Activation in the MLP & GELU\\
+Activation in the time and modulation layers & SiLU\\
+Positional embedding & 2D RoPE on queries and keys, no parameters\\
+Time embedding width $d_e$ & $192$\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Relation to the original DiT.} The block, the patchify step and the zero initialisation are those of \citet{peebles2023dit}. Our network differs in four ways. It runs on pixels and not on the latent of an autoencoder. Its positional embedding is a rotary embedding inside every attention layer, whereas the original adds a fixed sine-cosine embedding to the tokens once. It has no class label, so the modulation vector is the time embedding alone. And it outputs only the velocity, with no additional covariance output. It is also far smaller than the smallest model of that paper.
 
 \section{Additional experimental details}\label{app:details}
 
