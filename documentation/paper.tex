@@ -69,19 +69,19 @@
 \maketitle
 
 \begin{abstract}
-Flow matching samplers follow a velocity field from noise to data, and their discretisation error is governed by how much the trajectory bends. We study this bending for the exact marginal field of a finite training set under the linear path. The field is determined by the posterior over training images given the current noisy point, and we express the bending through the first three moments of that posterior: its mean $m$, covariance $C$ and third central moment $\kappa$. Building on the known identity $\ddot x=\dot m/(1-t)$, we derive the closed form $\dot m = C\eps/(1-t)^2 - t\kappa/(1-t)^3$, where $\eps$ is the predicted noise. We then bound $\lmax(C)$ and $\|\kappa\|$ by the diameter of an active set of training images near the current point, which gives a local, data-dependent bound on the bending instead of a fixed range of timesteps. Finally we turn the result into a step-size rule for the Euler sampler that estimates $\dot m$ from consecutive denoised predictions at no extra network evaluations. \todo{one sentence on the experimental findings once the experiments are done.}
+Flow matching samplers follow a velocity field from noise to data, and their discretisation error is governed by how much the trajectory bends. We study this bending for the exact marginal field of a finite training set under the linear path. The field is determined by the posterior over training images given the current noisy point, and we express the bending through the first three moments of that posterior: its mean $m$, covariance $C$ and third central moment $\kappa$. Building on the known identity $\ddot x = \dot m/(1 - t)$, we derive the closed form $\dot m = C\eps/(1 - t)^2 - t\kappa/(1 - t)^3$, where $\eps$ is the predicted noise. We then bound $\lmax(C)$ and $\|\kappa\|$ by the diameter of an active set of training images near the current point, which gives a local, data-dependent bound on the bending instead of a fixed range of timesteps. Finally we turn the result into a step-size rule for the Euler sampler that estimates $\dot m$ from consecutive denoised predictions at no extra network evaluations. \todo{one sentence on the experimental findings once the experiments are done.}
 \end{abstract}
 
 \section{Introduction}
 
-A flow matching model \citep{lipman2023flow} generates an image by integrating an ordinary differential equation $\dot x=u_t(x)$ from noise at $t=0$ to data at $t=1$. Some stretches of this journey are easy, because the path is straight and big steps are fine. Others are hard, because the path bends sharply and big steps go wrong. Recent work locates the hard part in a range of timesteps and then spends more training or more sampling steps there \citep{csflow,stablevelocity}.
+A flow matching model \citep{lipman2023flow} generates an image by integrating an ordinary differential equation $\dot x = u_t(x)$ from noise at $t = 0$ to data at $t = 1$. Where the path is straight, large steps are fine; where it bends sharply, large steps introduce error. Recent work locates the hard part in a range of timesteps and then spends more training or more sampling steps there \citep{csflow,stablevelocity}.
 
-We do not want a result of the form ``between timesteps $0.3$ and $0.4$ the field changes fastest''. We want the difficulty to depend on the field and on the neighbourhood of the current point. The starting observation is that at every noisy point the model is implicitly asking which training image the point came from. The answer is a posterior distribution over training images, and the claim of this paper is that difficulty is uncertainty: the path is hard exactly while the posterior is torn between several training images that are far apart.
+Instead of a result of the form "between timesteps $0.3$ and $0.4$ the field changes fastest", we would like the difficulty to depend on the field and on the neighbourhood of the current point. Our starting observation is that at every noisy point the model implicitly has to decide which training image the point came from. The answer is a posterior distribution over training images, and we argue that difficulty is uncertainty: the path is hard exactly while the posterior is undecided between several training images that are far apart.
 
 \paragraph{Contributions.}
 \begin{itemize}
   \item We collect the known identities for the spatial Jacobian, the divergence and the trajectory acceleration of the flow matching field in one notation (Section~\ref{sec:known}).
-  \item We derive a closed form for the rate of change $\dot m$ of the denoised prediction along a trajectory in terms of the posterior covariance and third moment (Theorem~\ref{thm:mdot}). Earlier work left the time derivative of the denoiser as an unexplained symbol.
+  \item We derive a closed form for the rate of change $\dot m$ of the denoised prediction along a trajectory in terms of the posterior covariance and third moment (Theorem~\ref{thm:mdot}). Earlier work does not give a closed form for the time derivative of the denoiser.
   \item We bound the bending by the diameter of an active set of training images (Theorem~\ref{thm:local}); the bound on the covariance cannot be improved.
   \item We derive a curvature-adaptive step size for the Euler sampler together with an estimator of $\dot m$ that costs no extra network evaluations (Section~\ref{sec:sampler}).
 \end{itemize}
@@ -89,168 +89,186 @@ The first three items are statements about the exact field of a finite training 
 
 \section{Setup and notation}\label{sec:setup}
 
-Let $\xn{1},\dots,\xn{N}\in\R^d$ be the training set and let the path be $x_t=t\,x_1+(1-t)\,\varepsilon$ with $\varepsilon\sim\mathcal N(0,I)$. We treat the training set as the data distribution, so the marginal path is $p_t(x)=\frac1N\sum_{i=1}^N\mathcal N\big(x;\,t\,\xn{i},(1-t)^2I\big)$. Let
+Let $\xn{1},\dots,\xn{N} \in \R^d$ be the training set and let the path be $x_t = t\,x_1 + (1 - t)\,\varepsilon$ with $\varepsilon \sim \mathcal N(0,I)$. We treat the training set as the data distribution, so the marginal path is
+$$
+  p_t(x) = \frac1N\sum_{i = 1}^N\mathcal N\big(x;\,t\,\xn{i},(1 - t)^2I\big).
+$$
+Let
 \begin{equation}\label{eq:w}
-  w_i(x,t)=\frac{\exp\!\big(-\|x-t\,\xn{i}\|^2/2(1-t)^2\big)}{\sum_j\exp\!\big(-\|x-t\,\xn{j}\|^2/2(1-t)^2\big)}
+  w_i(x,t) = \frac{\exp\!\big(-\|x - t\,\xn{i}\|^2/2(1 - t)^2\big)}{\sum_j\exp\!\big(-\|x - t\,\xn{j}\|^2/2(1 - t)^2\big)}
 \end{equation}
 be the posterior, that is, the probability that $x$ came from image $i$, and define
 \begin{equation}\label{eq:moments}
-  m=\sum_i w_i\,\xn{i},\qquad
-  C=\sum_i w_i\,(\xn{i}-m)(\xn{i}-m)^\top,\qquad
-  \kappa=\sum_i w_i\,\|\xn{i}-m\|^2(\xn{i}-m),
+  m = \sum_i w_i\,\xn{i},\qquad
+  C = \sum_i w_i\,(\xn{i} - m)(\xn{i} - m)^\top,\qquad
+  \kappa = \sum_i w_i\,\|\xn{i} - m\|^2(\xn{i} - m),
 \end{equation}
 \begin{equation}\label{eq:u}
-  \eps=\frac{x-t\,m}{1-t},\qquad u_t(x)=\frac{m-x}{1-t}.
+  \eps = \frac{x - t\,m}{1 - t},\qquad u_t(x) = \frac{m - x}{1 - t}.
 \end{equation}
-$m$, $C$ and $\kappa$ are the first three moments of the posterior: its mean, spread and asymmetry. $m$ is the best guess of the clean image. How uncertain that guess is is described by $C$, and it is $0$ when we are $100\%$ sure. $\kappa$ describes the asymmetry of the posterior and is $0$ when the posterior is symmetric. We will need $C$ when we differentiate $m$ with respect to space and $\kappa$ when we differentiate it along a trajectory. The field $u_t$ in \eqref{eq:u} is the marginal field: plugging $u_t(x\mid x_1)=\frac{x_1-x}{1-t}$ into the marginalization theorem gives $u_t(x)=\frac{m-x}{1-t}$ (Appendix~\ref{app:marginal}). The matrix $C$ is symmetric and positive semi-definite (Appendix~\ref{app:psd}), so its eigenvalues are real and lie in $[0,\lmax]$ with $\lmax=\max_{\|v\|=1}v^\top Cv$.
+Here $m$, $C$ and $\kappa$ are the first three moments of the posterior: its mean, spread and asymmetry. The mean $m$ is the best guess of the clean image. The covariance $C$ describes how uncertain that guess is, and it is $0$ when we are $100\%$ sure. The third moment $\kappa$ describes the asymmetry of the posterior and is $0$ when the posterior is symmetric. We will need $C$ when we differentiate $m$ with respect to space and $\kappa$ when we differentiate it along a trajectory.
 
-Throughout, $r=1-t$, and a dot denotes the total derivative $\frac{d}{dt}$ along a trajectory $\dot x=u_t(x)$.
+The field $u_t$ in \eqref{eq:u} is the marginal field: plugging $u_t(x\mid x_1) = \frac{x_1 - x}{1 - t}$ into the marginalization theorem gives $u_t(x) = \frac{m - x}{1 - t}$ (Appendix~\ref{app:marginal}). The matrix $C$ is symmetric and positive semi-definite (Appendix~\ref{app:psd}), so its eigenvalues are real and lie in $[0,\lmax]$ with $\lmax = \max_{\|v\| = 1}v^\top Cv$.
+
+Throughout, $r = 1 - t$, and a dot denotes the total derivative $\frac{d}{dt}$ along a trajectory $\dot x = u_t(x)$.
 
 \section{Known identities in our notation}\label{sec:known}
 
-\paragraph{Jacobian.} What we want is $\nabla_xu_t(x)$, because it says how nearby trajectories move relative to each other: a large positive eigenvalue means they separate fast. Since $u_t$ is just $m$ plus a simple term, $\nabla_xu_t=\frac{1}{1-t}\nabla_xm-\frac{1}{1-t}I$, and it suffices to compute $\nabla_xm\in\R^{d\times d}$.
+\paragraph{Jacobian.} We are interested in $\nabla_xu_t(x)$, since it describes how nearby trajectories move relative to each other; a large positive eigenvalue means that they separate fast. Since $u_t$ is just $m$ plus a simple term, $\nabla_xu_t = \frac{1}{1 - t}\nabla_xm - \frac{1}{1 - t}I$, and it suffices to compute $\nabla_xm \in \R^{d \times d}$.
 
 \begin{proposition}[\citealp{wan2024elucidating}, Prop.~C.2; \citealp{lv2026uncertainty}, Eq.~16]\label{prop:jac}
 \begin{equation}\label{eq:jac}
-  \nabla_xm=\frac{t}{(1-t)^2}\,C,\qquad
-  \nabla_xu_t=\frac{1}{1-t}\Big(\frac{t}{(1-t)^2}\,C-I\Big).
+  \nabla_xm = \frac{t}{(1 - t)^2}\,C,\qquad
+  \nabla_xu_t = \frac{1}{1 - t}\Big(\frac{t}{(1 - t)^2}\,C - I\Big).
 \end{equation}
 \end{proposition}
 This is the second-order Tweedie formula \citep{efron2011tweedie,manor2024posterior}. We give a self-contained proof for the finite training set in Appendix~\ref{app:jac}. Because $C$ is multiplied by a scalar and shifted by a multiple of $I$, $\nabla_xu_t$ has the same eigenvectors as $C$, and each eigenvalue $\lambda$ of $C$ becomes
 \[
-  \mu=\frac{1}{1-t}\Big(\frac{t\lambda}{(1-t)^2}-1\Big).
+  \mu = \frac{1}{1 - t}\Big(\frac{t\lambda}{(1 - t)^2} - 1\Big).
 \]
-As $\lambda\in[0,\lmax]$, the eigenvalues of $\nabla_xu_t$ lie in
+As $\lambda \in [0,\lmax]$, the eigenvalues of $\nabla_xu_t$ lie in
 \begin{equation}\label{eq:eigrange}
-  \Big[-\frac{1}{1-t},\ \frac{1}{1-t}\Big(\frac{t\,\lmax(C)}{(1-t)^2}-1\Big)\Big].
+  \Big[-\frac{1}{1 - t},\ \frac{1}{1 - t}\Big(\frac{t\,\lmax(C)}{(1 - t)^2} - 1\Big)\Big].
 \end{equation}
-$\mu<0$ means trajectories contract in that direction, and when $C=0$ everything is pulled onto one image at rate $\frac{1}{1-t}$. $\mu>0$ means trajectories separate, which only happens when $\lmax(C)>\frac{(1-t)^2}{t}$, while the sample is still ``choosing'' between images that are far apart. Since $C$ is symmetric, $\nabla_xu_t$ is symmetric, so locally the field only stretches or compresses along orthogonal axes (the eigenvectors of $C$) and never rotates.
+If $\mu < 0$, trajectories contract in that direction, and when $C = 0$ everything is pulled onto one image at rate $\frac{1}{1 - t}$. If $\mu > 0$, trajectories separate. This only happens when $\lmax(C) > \frac{(1 - t)^2}{t}$, that is, while the sample is still "choosing" between images that are far apart.
+
+Since $C$ is symmetric, $\nabla_xu_t$ is symmetric, so locally the field only stretches or compresses along orthogonal axes (the eigenvectors of $C$) and never rotates.
 
 \paragraph{Divergence.} From \citet{lv2026uncertainty} (Eq.~19 and Section~3) we get
 \begin{equation}\label{eq:lv}
-  \tr(C)=\frac{(1-t)^2}{t}\big(d+(1-t)\,\nabla\!\cdot u_t\big),\qquad
-  \frac{d}{dt}\log p_t(x_t)=-\nabla\!\cdot u_t(x_t).
+  \tr(C) = \frac{(1 - t)^2}{t}\big(d + (1 - t)\,\nabla\!\cdot u_t\big),\qquad
+  \frac{d}{dt}\log p_t(x_t) = -\nabla\!\cdot u_t(x_t).
 \end{equation}
-Since $u_t(x\mid\xn{i})-u_t(x)=\frac{\xn{i}-m}{1-t}$, the variance of the training target at $x$ is
+Since $u_t(x\mid\xn{i}) - u_t(x) = \frac{\xn{i} - m}{1 - t}$, the variance of the training target at $x$ is
 \[
-  V_t(x)=\sum_iw_i\Big\|\frac{\xn{i}-m}{1-t}\Big\|^2=\frac{\tr(C)}{(1-t)^2},
+  V_t(x) = \sum_iw_i\Big\|\frac{\xn{i} - m}{1 - t}\Big\|^2 = \frac{\tr(C)}{(1 - t)^2},
 \]
 and substituting gives
 \begin{equation}\label{eq:div}
-  \nabla\!\cdot u_t=\frac{t\,V_t-d}{1-t},\qquad
-  \frac{d}{dt}\log p_t(x_t)=\frac{d-t\,V_t(x_t)}{1-t}.
+  \nabla\!\cdot u_t = \frac{t\,V_t - d}{1 - t},\qquad
+  \frac{d}{dt}\log p_t(x_t) = \frac{d - t\,V_t(x_t)}{1 - t}.
 \end{equation}
 So the field contracts volume (density rises along the trajectory) unless the training targets at $x$ disagree strongly. $V_t$ is the velocity variance studied by \citet{stablevelocity}.
 
 \paragraph{Acceleration.} From \citet{rao2026geometry} (Proposition~A.1, Eq.~18), in our notation,
 \begin{equation}\label{eq:acc}
-  \ddot x=\frac{\dot m}{1-t}.
+  \ddot x = \frac{\dot m}{1 - t}.
 \end{equation}
-The proof differentiates $u_t=\frac{m-x}{1-t}$ and uses $\dot x=u$ and $\frac{m-x}{1-t}=u$, which gives $\ddot x=\frac{\dot m-u}{1-t}+\frac{u}{1-t}$. So a trajectory bends exactly when its denoised prediction moves. In the same paper they also split $\dot m=\partial_tm+(\nabla_xm)\,u$ but give no closed form for $\partial_tm$. From here on it is new territory: we compute $\dot m$ exactly in terms of the posterior moments $C$ and $\kappa$.
+The proof differentiates $u_t = \frac{m - x}{1 - t}$ and uses $\dot x = u$ and $\frac{m - x}{1 - t} = u$, which gives $\ddot x = \frac{\dot m - u}{1 - t} + \frac{u}{1 - t}$. So a trajectory bends exactly when its denoised prediction moves. The same paper also splits $\dot m = \partial_tm + (\nabla_xm)\,u$ but gives no closed form for $\partial_tm$. What follows is new: we compute $\dot m$ exactly in terms of the posterior moments $C$ and $\kappa$.
 
 \section{Closed form for \texorpdfstring{$\dot m$}{the rate of change of the denoiser}}\label{sec:mdot}
 
 \begin{theorem}\label{thm:mdot}
-Along any trajectory $\dot x=u_t(x)$ of the field \eqref{eq:u}, for $t\in(0,1)$,
+Along any trajectory $\dot x = u_t(x)$ of the field \eqref{eq:u}, for $t \in (0,1)$,
 \begin{equation}\label{eq:mdot}
-  \dot m=\frac{C\,\eps}{(1-t)^2}-\frac{t\,\kappa}{(1-t)^3},
+  \dot m = \frac{C\,\eps}{(1 - t)^2} - \frac{t\,\kappa}{(1 - t)^3},
   \qquad\text{and hence}\qquad
-  \ddot x=\frac{C\,\eps}{(1-t)^3}-\frac{t\,\kappa}{(1-t)^4}.
+  \ddot x = \frac{C\,\eps}{(1 - t)^3} - \frac{t\,\kappa}{(1 - t)^4}.
 \end{equation}
 \end{theorem}
 
 \begin{proof}[Proof sketch]
-Write $w_i=e^{g_i}/\sum_je^{g_j}$ with $g_i=-\|x-t\,\xn{i}\|^2/2r^2$. Since the training points are constant, $\dot m=\sum_i\dot w_i\,\xn{i}$, and differentiating $\log w_i$ in time gives the same softmax rule as for the spatial gradient, $\dot w_i=w_i(\dot g_i-\sum_jw_j\dot g_j)$. Subtracting $m$ times a zero sum yields
+Write $w_i = e^{g_i}/\sum_je^{g_j}$ with $g_i = -\|x - t\,\xn{i}\|^2/2r^2$. Since the training points are constant, $\dot m = \sum_i\dot w_i\,\xn{i}$, and differentiating $\log w_i$ in time gives the same softmax rule as for the spatial gradient, $\dot w_i = w_i(\dot g_i - \sum_jw_j\dot g_j)$. Subtracting $m$ times a zero sum yields
 \begin{equation}\label{eq:covform}
-  \dot m=\sum_iw_i\,(\xn{i}-m)\,\dot g_i .
+  \dot m = \sum_iw_i\,(\xn{i} - m)\,\dot g_i .
 \end{equation}
-Any part of $\dot g_i$ that does not depend on $i$ contributes nothing to $\dot m$, so we only need to track the $i$-dependent part of $\dot g_i$. The sum \eqref{eq:covform} is a weighted covariance between $\xn{i}$ and $\dot g_i$, and a covariance treats the three kinds of terms differently; the one-dimensional version is $\Cov(X,c+bX+aX^2)=0+b\,\mathrm{Var}(X)+a\,\Cov(X,X^2)$. So sorting $\dot g_i$ by how it depends on $\xn{i}$ is the same as sorting it by what each part becomes: the part without $\xn{i}$ contributes nothing, the linear part $b\cdot\xn{i}$ contributes $Cb$, and the quadratic part $\|\xn{i}\|^2$ contributes $2Cm+\kappa$. Computing $\dot g_i$ gives $b=\frac{(1+t)x+t\,r\,u}{r^3}$ and the quadratic coefficient $-\frac{t}{r^3}$, hence $\dot m=C\big(b-\frac{2tm}{r^3}\big)-\frac{t\kappa}{r^3}$, and $r\,u=m-x$ simplifies the bracket to $\eps/r^2$. The full computation is in Appendix~\ref{app:mdot}.
+Any part of $\dot g_i$ that does not depend on $i$ contributes nothing to $\dot m$, so we only need to track the $i$-dependent part of $\dot g_i$.
+
+The sum \eqref{eq:covform} is a weighted covariance between $\xn{i}$ and $\dot g_i$, and a covariance treats the three kinds of terms differently; the one-dimensional version is $\Cov(X,c + bX + aX^2) = 0 + b\,\mathrm{Var}(X) + a\,\Cov(X,X^2)$. So sorting $\dot g_i$ by how it depends on $\xn{i}$ is the same as sorting it by what each part becomes: the part without $\xn{i}$ contributes nothing, the linear part $b \cdot \xn{i}$ contributes $Cb$, and the quadratic part $\|\xn{i}\|^2$ contributes $2Cm + \kappa$.
+
+Computing $\dot g_i$ gives $b = \frac{(1 + t)x + t\,r\,u}{r^3}$ and the quadratic coefficient $-\frac{t}{r^3}$, hence $\dot m = C\big(b - \frac{2tm}{r^3}\big) - \frac{t\kappa}{r^3}$, and $r\,u = m - x$ simplifies the bracket to $\eps/r^2$. The full computation is in Appendix~\ref{app:mdot}.
 \end{proof}
 
 \begin{corollary}[Euler's error]\label{cor:euler}
-Since $u=\dot x$, Taylor's theorem gives $x(t+h)=x+h\,u+\frac{h^2}{2}\ddot x+O(h^3)$. An Euler step keeps only $x+h\,u$, so its local error is
+Since $u = \dot x$, Taylor's theorem gives $x(t + h) = x + h\,u + \frac{h^2}{2}\ddot x + O(h^3)$. An Euler step keeps only $x + h\,u$, so its local error is
 \begin{equation}\label{eq:euler}
-  x(t+h)-(x+h\,u)=\frac{h^2}{2(1-t)}\,\dot m+O(h^3).
+  x(t + h) - (x + h\,u) = \frac{h^2}{2(1 - t)}\,\dot m + O(h^3).
 \end{equation}
 \end{corollary}
 
-\paragraph{Interpretation of the results.} A trajectory curves only through the spread ($C$) and the asymmetry ($\kappa$) of the posterior over training images. If one image has all the weight, then $C=0$ and $\kappa=0$, so $\dot m=0$: the path is a straight line and Euler is exact. That agrees with the zero-baseline result of \citet{rao2026geometry}. If the posterior is symmetric about $m$, then $\kappa=0$ and only the $C\eps$ term remains. For exactly two images with equal weights that term vanishes too, because then $C=\frac{\Delta^2}{4}ee^\top$ with $e\cdot\eps=0$; the bending occurs next to the symmetric point, not at it.
+\paragraph{Interpretation of the results.} A trajectory curves only through the spread ($C$) and the asymmetry ($\kappa$) of the posterior over training images. If one image has all the weight, then $C = 0$ and $\kappa = 0$, so $\dot m = 0$: the path is a straight line and Euler is exact. That agrees with the zero-baseline result of \citet{rao2026geometry}. If the posterior is symmetric about $m$, then $\kappa = 0$ and only the $C\eps$ term remains. For exactly two images with equal weights that term vanishes too, because then $C = \frac{\Delta^2}{4}ee^\top$ with $e \cdot \eps = 0$; the bending occurs next to the symmetric point, not at it.
 
 \section{Local bounds}\label{sec:bounds}
 
 The weights $w_i$ decay exponentially with distance, so most images have negligible weight. We want to say this precisely, so that every sum can be split into an active and an inactive index set.
 
-\paragraph{Active set.} Let $i^\star$ be the point with the largest weight, equivalently the largest $g_i$. For a fixed $\delta\in(0,1)$ define
+\paragraph{Active set.} Let $i^\star$ be the point with the largest weight, equivalently the largest $g_i$. For a fixed $\delta \in (0,1)$ define
 \begin{equation}\label{eq:active}
-  A=\Big\{i:\ g_i\ge g_{i^\star}-\log\frac{N}{\delta}\Big\}.
+  A = \Big\{i:\ g_i \ge g_{i^\star} - \log\frac{N}{\delta}\Big\}.
 \end{equation}
 \begin{lemma}\label{lem:tail}
-$\sum_{i\notin A}w_i\le\delta$.
+$\sum_{i \notin A}w_i \le \delta$.
 \end{lemma}
-Geometrically, the active points are those almost as close to the rescaled point $x/t$ as the nearest point: $i\in A$ if and only if $\|x/t-\xn{i}\|^2\le\|x/t-\xn{i^\star}\|^2+2\big(\frac{1-t}{t}\big)^2\log\frac N\delta$. The allowed slack shrinks to zero as $t\to1$. Two diameters are used in what follows,
+Geometrically, the active points are those almost as close to the rescaled point $x/t$ as the nearest point: $i \in A$ if and only if
+$$
+  \|x/t - \xn{i}\|^2 \le \|x/t - \xn{i^\star}\|^2 + 2\Big(\frac{1 - t}{t}\Big)^2\log\frac N\delta .
+$$
+The allowed slack shrinks to zero as $t \to 1$. Two diameters are used in what follows,
 \[
-  D_A=\max_{i,j\in A}\|\xn{i}-\xn{j}\|\qquad\text{and}\qquad D=\max_{i,j}\|\xn{i}-\xn{j}\|.
+  D_A = \max_{i,j \in A}\|\xn{i} - \xn{j}\|\qquad\text{and}\qquad D = \max_{i,j}\|\xn{i} - \xn{j}\|.
 \]
 
 \begin{theorem}\label{thm:local}
-For every $x$, $t\in(0,1)$ and $\delta\in(0,1)$,
+For every $x$, $t \in (0,1)$ and $\delta \in (0,1)$,
 \begin{align}
-  \lmax(C)&\le\frac{D_A^2}{4}+\delta D^2, \label{eq:lam}\\
-  \|\kappa\|&\le(D_A+\delta D)^3+\delta D^3, \label{eq:kap}\\
-  \|\dot m\|&\le\frac{\big(\frac{D_A^2}{4}+\delta D^2\big)\|\eps\|}{(1-t)^2}+\frac{t\,\big[(D_A+\delta D)^3+\delta D^3\big]}{(1-t)^3}, \label{eq:local}
+  \lmax(C)&\le \frac{D_A^2}{4} + \delta D^2, \label{eq:lam}\\
+  \|\kappa\|&\le (D_A + \delta D)^3 + \delta D^3, \label{eq:kap}\\
+  \|\dot m\|&\le \frac{\big(\frac{D_A^2}{4} + \delta D^2\big)\|\eps\|}{(1 - t)^2} + \frac{t\,\big[(D_A + \delta D)^3 + \delta D^3\big]}{(1 - t)^3}, \label{eq:local}
 \end{align}
-and $\|\ddot x\|=\|\dot m\|/(1-t)$.
+and $\|\ddot x\| = \|\dot m\|/(1 - t)$.
 \end{theorem}
 The proofs are in Appendix~\ref{app:bounds}. The bound depends on $x$ and $t$ only through the active set, which makes it a local, data-dependent statement. Inserting \eqref{eq:lam} into the eigenvalue range \eqref{eq:eigrange} gives
 \begin{equation}\label{eq:lamjac}
-  \lmax(\nabla_xu_t)\le\frac{1}{1-t}\Big(\frac{t}{(1-t)^2}\Big(\frac{D_A^2}{4}+\delta D^2\Big)-1\Big).
+  \lmax(\nabla_xu_t) \le \frac{1}{1 - t}\Big(\frac{t}{(1 - t)^2}\Big(\frac{D_A^2}{4} + \delta D^2\Big) - 1\Big).
 \end{equation}
 
-\paragraph{Tightness.} Take $\xn{1},\xn{2}$ with $\|\xn{1}-\xn{2}\|=\Delta$ and $x=t\cdot\frac{\xn{1}+\xn{2}}{2}$. Both are equally far from $x/t$, so $w_1=w_2=\frac12$, both are active, and $D_A=\Delta$. Along $e=\frac{\xn{1}-\xn{2}}{\Delta}$ we get $e^\top Ce=\frac12\big(\frac\Delta2\big)^2+\frac12\big(\frac\Delta2\big)^2=\frac{\Delta^2}{4}$, so $\frac{D_A^2}{4}$ cannot be improved. The bound \eqref{eq:kap} is not tight: in the two-point example $\kappa=0$ by symmetry. Consequently \eqref{eq:local} is an upper bound and is not claimed to be tight.
+\paragraph{Tightness.} Take $\xn{1},\xn{2}$ with $\|\xn{1} - \xn{2}\| = \Delta$ and $x = t \cdot \frac{\xn{1} + \xn{2}}{2}$. Both are equally far from $x/t$, so $w_1 = w_2 = \frac12$, both are active, and $D_A = \Delta$. Along $e = \frac{\xn{1} - \xn{2}}{\Delta}$ we get $e^\top Ce = \frac12\big(\frac\Delta2\big)^2 + \frac12\big(\frac\Delta2\big)^2 = \frac{\Delta^2}{4}$, so $\frac{D_A^2}{4}$ cannot be improved.
+
+The bound \eqref{eq:kap} is not tight, since in the two-point example $\kappa = 0$ by symmetry. Consequently \eqref{eq:local} is an upper bound and is not claimed to be tight.
 
 \section{Curvature-adaptive step sizes}\label{sec:sampler}
 
-We know how much a trajectory bends ($\ddot x=\frac{\dot m}{1-t}$). Here we turn that into a rule for choosing the step size of the Euler sampler, using only quantities the sampler already computes.
+We know how much a trajectory bends ($\ddot x = \frac{\dot m}{1 - t}$). Here we turn that into a rule for choosing the step size of the Euler sampler, using only quantities the sampler already computes.
 
-\paragraph{The error of one Euler step.} Let $x(t)$ be the exact trajectory and suppose the sampler sits exactly on it at time $t$, at the point $x=x(t)$. By Taylor's theorem, $x(t+h)=x(t)+h\,\dot x(t)+\frac{h^2}{2}\ddot x(t)+O(h^3)$. The Euler sampler moves to $x^{\mathrm{Euler}}=x+h\,u_t(x)$. Since $\dot x(t)=u_t(x)$ by definition of the trajectory, the first two terms of the Taylor expansion are exactly the Euler step, and inserting $\ddot x=\frac{\dot m}{1-t}$,
+\paragraph{The error of one Euler step.} Let $x(t)$ be the exact trajectory and suppose the sampler sits exactly on it at time $t$, at the point $x = x(t)$. By Taylor's theorem, $x(t + h) = x(t) + h\,\dot x(t) + \frac{h^2}{2}\ddot x(t) + O(h^3)$. The Euler sampler moves to $x^{\mathrm{Euler}} = x + h\,u_t(x)$. Since $\dot x(t) = u_t(x)$ by definition of the trajectory, the first two terms of the Taylor expansion are exactly the Euler step, and inserting $\ddot x = \frac{\dot m}{1 - t}$,
 \[
-  x(t+h)-x^{\mathrm{Euler}}=\frac{h^2}{2}\ddot x(t)+O(h^3)=\frac{h^2}{2(1-t)}\,\dot m+O(h^3)
+  x(t + h) - x^{\mathrm{Euler}} = \frac{h^2}{2}\ddot x(t) + O(h^3) = \frac{h^2}{2(1 - t)}\,\dot m + O(h^3)
 \]
 is the local error.
 
-\paragraph{Choosing the step size.} With equal steps $h$, the local error is proportional to $\frac{\|\dot m\|}{1-t}$, so where the posterior is undecided it is large, and it is almost zero where the path is straight; a uniform grid spends evaluations where they achieve nothing. A remedy is to make every step commit the same error, by fixing a tolerance $\tol>0$ and requiring
+\paragraph{Choosing the step size.} With equal steps $h$, the local error is proportional to $\frac{\|\dot m\|}{1 - t}$. It is large where the posterior is undecided and almost zero where the path is straight, so a uniform grid spends evaluations where they achieve nothing. A remedy is to let every step make the same error, by fixing a tolerance $\tol > 0$ and requiring
 \begin{equation}\label{eq:h}
-  \frac{h^2}{2(1-t)}\,\|\dot m\|=\tol
+  \frac{h^2}{2(1 - t)}\,\|\dot m\| = \tol
   \quad\Longleftrightarrow\quad
-  h=\sqrt{\frac{2(1-t)\,\tol}{\|\dot m\|}},
+  h = \sqrt{\frac{2(1 - t)\,\tol}{\|\dot m\|}},
 \end{equation}
 so steps become small where the trajectory bends and large where it is straight, for each sample individually.
 
-\paragraph{Estimating $\dot m$ at no extra cost.} Calculating $\|\dot m\|$ requires the training set, which a trained network does not expose. But $m$ is available: $u_t(x)=\frac{m-x}{1-t}$ is equivalent to $m=x+(1-t)\,u_t(x)$, so at step $k$, with the network output $v_k\approx u_{t_k}(x_k)$ that the sampler computes anyway, we get the denoised prediction $\hat x_1^{(k)}=x_k+(1-t_k)\,v_k\approx m_{t_k}(x_k)$. Since $\dot m$ is the rate of change of $m$ along the trajectory, the natural estimate is the difference of two consecutive predictions,
+\paragraph{Estimating $\dot m$ at no extra cost.} Calculating $\|\dot m\|$ requires the training set, which a trained network does not expose. However, $m$ is available, because $u_t(x) = \frac{m - x}{1 - t}$ is equivalent to $m = x + (1 - t)\,u_t(x)$. At step $k$ the sampler computes the network output $v_k \approx u_{t_k}(x_k)$ anyway, and from it we get the denoised prediction $\hat x_1^{(k)} = x_k + (1 - t_k)\,v_k \approx m_{t_k}(x_k)$. Since $\dot m$ is the rate of change of $m$ along the trajectory, the natural estimate is the difference of two consecutive predictions,
 \begin{equation}\label{eq:est}
-  \widehat{\dot m}_k=\frac{\hat x_1^{(k)}-\hat x_1^{(k-1)}}{h_{k-1}}.
+  \widehat{\dot m}_k = \frac{\hat x_1^{(k)} - \hat x_1^{(k - 1)}}{h_{k - 1}}.
 \end{equation}
 \begin{proposition}\label{prop:est}
-For the exact field, $\widehat{\dot m}_k=\dot m(t_{k-1})+O(h_{k-1})$.
+For the exact field, $\widehat{\dot m}_k = \dot m(t_{k - 1}) + O(h_{k - 1})$.
 \end{proposition}
-The proof is in Appendix~\ref{app:est}. The estimate describes time $t_{k-1}$ but is used to choose the step at $t_k$. Since $\dot m(t_k)=\dot m(t_{k-1})+O(h)$, this one-step lag costs another $O(h)$ and does not change the order. For a trained network the estimate additionally carries the network's own error $v_\theta-u$, which we can only measure empirically.
+The proof is in Appendix~\ref{app:est}. The estimate describes time $t_{k - 1}$ but is used to choose the step at $t_k$. Since $\dot m(t_k) = \dot m(t_{k - 1}) + O(h)$, this one-step lag costs another $O(h)$ and does not change the order. For a trained network the estimate additionally carries the network's own error $v_\theta - u$, which we can only measure empirically.
 
-\paragraph{Resulting sampler.} Algorithm~\ref{alg:bendflow} states the sampler. There is no previous prediction at $k=0$, so $h_0$ is a fixed value. When the posterior has committed, $\dot m\to0$ and the rule would give $h\to\infty$; $h_{\max}$ and the remaining time prevent overshooting $t=1$. $h_{\min}$ prevents the sampler from stalling at a sharp bend. To compare against a uniform grid, we tune $\tol$ until the average step count equals that of the uniform grid. Each step costs one network evaluation, the same as plain Euler.
+\paragraph{Resulting sampler.} Algorithm~\ref{alg:bendflow} states the sampler. There is no previous prediction at $k = 0$, so $h_0$ is a fixed value. When the posterior has committed, $\dot m \to 0$ and the rule would give $h \to \infty$, so $h_{\max}$ and the remaining time prevent overshooting $t = 1$, while $h_{\min}$ prevents the sampler from stalling at a sharp bend. To compare against a uniform grid, we tune $\tol$ until the average step count equals that of the uniform grid. Each step costs one network evaluation, the same as plain Euler.
 
 \begin{algorithm}[t]
 \caption{Curvature-adaptive Euler sampler}\label{alg:bendflow}
 \begin{algorithmic}[1]
-\Require velocity model $v$, tolerance $\tol$, bounds $h_{\min}\le h_{\max}$, first step $h_0$
-\State $t_0\gets0$,\quad $x_0\sim\mathcal N(0,I)$,\quad $k\gets0$
-\While{$t_k<1$}
-  \State $v_k\gets v(x_k,t_k)$ and $\hat x_1^{(k)}\gets x_k+(1-t_k)\,v_k$
-  \If{$k\ge1$}
-    \State $\widehat{\dot m}_k\gets\big(\hat x_1^{(k)}-\hat x_1^{(k-1)}\big)/h_{k-1}$
-    \State $h_k\gets\sqrt{2(1-t_k)\,\tol/\|\widehat{\dot m}_k\|}$
+\Require velocity model $v$, tolerance $\tol$, bounds $h_{\min} \le h_{\max}$, first step $h_0$
+\State $t_0 \gets 0$,\quad $x_0 \sim \mathcal N(0,I)$,\quad $k \gets 0$
+\While{$t_k < 1$}
+  \State $v_k \gets v(x_k,t_k)$ and $\hat x_1^{(k)} \gets x_k + (1 - t_k)\,v_k$
+  \If{$k \ge 1$}
+    \State $\widehat{\dot m}_k \gets \big(\hat x_1^{(k)} - \hat x_1^{(k - 1)}\big)/h_{k - 1}$
+    \State $h_k \gets \sqrt{2(1 - t_k)\,\tol/\|\widehat{\dot m}_k\|}$
     \State clip $h_k$ to $[h_{\min},h_{\max}]$
   \EndIf
-  \State $h_k\gets\min(h_k,\,1-t_k)$
-  \State $x_{k+1}\gets x_k+h_k\,v_k$,\quad $t_{k+1}\gets t_k+h_k$,\quad $k\gets k+1$
+  \State $h_k \gets \min(h_k,\,1 - t_k)$
+  \State $x_{k + 1} \gets x_k + h_k\,v_k$,\quad $t_{k + 1} \gets t_k + h_k$,\quad $k \gets k + 1$
 \EndWhile
 \State \Return $x_k$
 \end{algorithmic}
@@ -293,14 +311,16 @@ DiT & BendFlow & -- & -- & --\\
 
 \section{Related work}\label{sec:related}
 
-The connection between the Jacobian of the denoiser and the posterior covariance goes back to higher-order Tweedie formulas \citep{efron2011tweedie,manor2024posterior}; \citet{manor2024posterior} also relate the third posterior moment to spatial derivatives of the second, whereas Theorem~\ref{thm:mdot} relates it to the derivative along a trajectory. \citet{wan2024elucidating} state the Jacobian identity for general schedules and analyse how trajectories are attracted to and absorbed by local clusters of the data. \citet{lv2026uncertainty} derive the covariance and divergence identities for the linear interpolant and use them for uncertainty quantification. \citet{rao2026geometry} prove the acceleration identity \eqref{eq:acc} and use the accumulated acceleration as an uncertainty proxy for failure detection, not for choosing step sizes. \citet{milanfar2026lagrangian} argues qualitatively that the denoiser Jacobian is the source of trajectory curvature and of small solver steps. Global Lipschitz bounds on the velocity field are given by \citet{gao2024convergence} and \citet{benton2024error}; our bounds are local and depend on the active set.
+The connection between the Jacobian of the denoiser and the posterior covariance goes back to higher-order Tweedie formulas \citep{efron2011tweedie,manor2024posterior}; \citet{manor2024posterior} also relate the third posterior moment to spatial derivatives of the second, whereas Theorem~\ref{thm:mdot} relates it to the derivative along a trajectory. \citet{wan2024elucidating} state the Jacobian identity for general schedules and analyse how trajectories are attracted to and absorbed by local clusters of the data. \citet{lv2026uncertainty} derive the covariance and divergence identities for the linear interpolant and use them for uncertainty quantification.
+
+\citet{rao2026geometry} prove the acceleration identity \eqref{eq:acc} and use the accumulated acceleration as an uncertainty proxy for failure detection, not for choosing step sizes. \citet{milanfar2026lagrangian} argues qualitatively that the denoiser Jacobian is the source of trajectory curvature and of small solver steps. Global Lipschitz bounds on the velocity field are given by \citet{gao2024convergence} and \citet{benton2024error}; our bounds are local and depend on the active set.
 
 \section{Limitations and conclusion}\label{sec:conclusion}
 
 All statements are about the exact marginal field of a finite training set under the linear path. Sampling with that field reproduces training images, so it serves as a reference for memorisation and not as a generator. The bound \eqref{eq:local} is an upper bound and can be loose, in particular through the factor $\|\eps\|$ and the bound on $\kappa$. Proposition~\ref{prop:est} covers the exact field only, and the step-size rule controls the local error; we do not prove a bound on the global error. The novelty claims rest on a search of the closest literature and not on a proof that the results are absent elsewhere. \todo{conclusion once the experiments are done.}
 
 \section*{LLM Usage}
-Claude (Anthropic) was used to verify the derivations, to search for related work, and it introduced the notation $C$ and $\kappa$; $m$ is also the standard notation for the denoiser in the literature. The handwritten derivations are available in the repository.
+Claude (Anthropic) was used to verify the derivations, to search for related work, and it introduced the notation $C$ and $\kappa$; $m$ is also the standard notation for the denoiser in the literature. Claude was also used to check the author-written Python code and to write all the tests, which the author reviewed manually. The handwritten math derivations are available in the repository, and this \LaTeX{} document was constructed from them.
 
 \begin{thebibliography}{99}
 
@@ -412,234 +432,234 @@ Y.~Wu and K.~He.
 
 \section{The marginal field}\label{app:marginal}
 
-We need to show that $u_t$ in \eqref{eq:u} is the marginal field. The marginalization theorem states that if $u_t(x\mid z)$ generates $p_t(x\mid z)$ for every $z$, then the posterior average $u_t(x)=\E_{z\sim p(\cdot\mid x_t=x)}[u_t(x\mid z)]$ and the marginal path $p_t(x)=\int p_t(x\mid z)\,q(z)\,dz$ satisfy the continuity equation $\partial_tp_t+\nabla\!\cdot(p_tu_t)=0$, and thus $u_t(x)$ generates $p_t(x)$ \citep{lipman2023flow}.
+We need to show that $u_t$ in \eqref{eq:u} is the marginal field. The marginalization theorem states that if $u_t(x\mid z)$ generates $p_t(x\mid z)$ for every $z$, then the posterior average $u_t(x) = \E_{z \sim p(\cdot \mid x_t = x)}[u_t(x\mid z)]$ and the marginal path $p_t(x) = \int p_t(x\mid z)\,q(z)\,dz$ satisfy the continuity equation $\partial_tp_t + \nabla\!\cdot(p_tu_t) = 0$, and thus $u_t(x)$ generates $p_t(x)$ \citep{lipman2023flow}.
 
-For the training set as data distribution, $q=\frac1N\sum_i\delta_{\xn{i}}$ and $p_t(x\mid\xn{i})=\mathcal N(x;t\,\xn{i},(1-t)^2I)$. By Bayes' rule the posterior probability of image $i$ is proportional to $\frac1N\mathcal N(x;t\,\xn{i},(1-t)^2I)$; the factor $\frac1N$ and the common normalising constant of the Gaussians cancel, which leaves exactly $w_i$ in \eqref{eq:w}. Plugging $u_t(x\mid x_1)=\frac{x_1-x}{1-t}$ into the theorem,
+For the training set as data distribution, $q = \frac1N\sum_i\delta_{\xn{i}}$ and $p_t(x\mid\xn{i}) = \mathcal N(x;t\,\xn{i},(1 - t)^2I)$. By Bayes' rule the posterior probability of image $i$ is proportional to $\frac1N\mathcal N(x;t\,\xn{i},(1 - t)^2I)$; the factor $\frac1N$ and the common normalising constant of the Gaussians cancel, which leaves exactly $w_i$ in \eqref{eq:w}. Plugging $u_t(x\mid x_1) = \frac{x_1 - x}{1 - t}$ into the theorem,
 \[
-  u_t(x)=\E_{x_1\sim p(\cdot\mid x_t=x)}\big[u_t(x\mid x_1)\big]
-  =\sum_iw_i\,\frac{\xn{i}-x}{1-t}
-  =\frac{1}{1-t}\Big(\sum_iw_i\,\xn{i}-x\underbrace{\sum_iw_i}_{=1}\Big)
-  =\frac{m-x}{1-t}.
+  u_t(x) = \E_{x_1 \sim p(\cdot \mid x_t = x)}\big[u_t(x\mid x_1)\big]
+  = \sum_iw_i\,\frac{\xn{i} - x}{1 - t}
+  = \frac{1}{1 - t}\Big(\sum_iw_i\,\xn{i} - x\underbrace{\sum_iw_i}_{= 1}\Big)
+  = \frac{m - x}{1 - t}.
 \]
 
 \section{Symmetry and positive semi-definiteness of \texorpdfstring{$C$}{C}}\label{app:psd}
 
-\textbf{Symmetric.} $(aa^\top)^\top=(a^\top)^\top a^\top=aa^\top$, so $(\xn{i}-m)(\xn{i}-m)^\top$ is symmetric, and we only add such matrices with weights, so $C$ is symmetric.
+\textbf{Symmetric.} $(aa^\top)^\top = (a^\top)^\top a^\top = aa^\top$, so $(\xn{i} - m)(\xn{i} - m)^\top$ is symmetric, and we only add such matrices with weights, so $C$ is symmetric.
 
-\textbf{Positive semi-definite.} For all $v\in\R^d$,
+\textbf{Positive semi-definite.} For all $v \in \R^d$,
 \[
-  v^\top Cv=\sum_i\underbrace{w_i}_{\ge0}\underbrace{\big(v^\top(\xn{i}-m)\big)^2}_{\ge0}\ge0 .
+  v^\top Cv = \sum_i\underbrace{w_i}_{\ge 0}\underbrace{\big(v^\top(\xn{i} - m)\big)^2}_{\ge 0} \ge 0 .
 \]
-$C$ is not positive definite in general: if one image has all the weight then $C=0$.
+$C$ is not positive definite in general: if one image has all the weight then $C = 0$.
 
 \section{Proof of Proposition~\ref{prop:jac}}\label{app:jac}
 
-Recall $m=\sum_iw_i\,\xn{i}$. To shorten the exponentials, let
+Recall $m = \sum_iw_i\,\xn{i}$. To shorten the exponentials, let
 \[
-  g_i(x)=-\frac{\|x-t\,\xn{i}\|^2}{2(1-t)^2}
-  =-\frac{1}{2(1-t)^2}\Big(x^\top x-2t\,(\xn{i})^\top x+t^2(\xn{i})^\top\xn{i}\Big),
-  \qquad w_i=\frac{e^{g_i}}{\sum_je^{g_j}} .
+  g_i(x) = -\frac{\|x - t\,\xn{i}\|^2}{2(1 - t)^2}
+  = -\frac{1}{2(1 - t)^2}\Big(x^\top x - 2t\,(\xn{i})^\top x + t^2(\xn{i})^\top\xn{i}\Big),
+  \qquad w_i = \frac{e^{g_i}}{\sum_je^{g_j}} .
 \]
-Here $t$ and $\xn{i}$ are constants, and $\nabla_x(x^\top x)=2x$, $\nabla_x(a^\top x)=a$, so
+Here $t$ and $\xn{i}$ are constants, and $\nabla_x(x^\top x) = 2x$, $\nabla_x(a^\top x) = a$, so
 \[
-  \nabla g_i(x)=-\frac{1}{2(1-t)^2}\big(2x-2t\,\xn{i}\big)=-\frac{x-t\,\xn{i}}{(1-t)^2}.
+  \nabla g_i(x) = -\frac{1}{2(1 - t)^2}\big(2x - 2t\,\xn{i}\big) = -\frac{x - t\,\xn{i}}{(1 - t)^2}.
 \]
-We also need $\nabla w_i$. Since $w_i>0$, $\log w_i=g_i-\log\big(\sum_je^{g_j}\big)$ and $\nabla\log w_i=\frac{\nabla w_i}{w_i}$, so $\frac{\nabla w_i}{w_i}=\nabla g_i-\nabla\log\big(\sum_je^{g_j}\big)$. Now
+We also need $\nabla w_i$. Since $w_i > 0$, $\log w_i = g_i - \log\big(\sum_je^{g_j}\big)$ and $\nabla\log w_i = \frac{\nabla w_i}{w_i}$, so $\frac{\nabla w_i}{w_i} = \nabla g_i - \nabla\log\big(\sum_je^{g_j}\big)$. Now
 \[
-  \nabla\log\Big(\sum_je^{g_j}\Big)=\frac{\nabla\big(\sum_je^{g_j}\big)}{\sum_ke^{g_k}}
-  =\frac{\sum_je^{g_j}\nabla g_j}{\sum_ke^{g_k}}
-  =\sum_j\Big(\frac{e^{g_j}}{\sum_ke^{g_k}}\Big)\nabla g_j=\sum_jw_j\nabla g_j,
+  \nabla\log\Big(\sum_je^{g_j}\Big) = \frac{\nabla\big(\sum_je^{g_j}\big)}{\sum_ke^{g_k}}
+  = \frac{\sum_je^{g_j}\nabla g_j}{\sum_ke^{g_k}}
+  = \sum_j\Big(\frac{e^{g_j}}{\sum_ke^{g_k}}\Big)\nabla g_j = \sum_jw_j\nabla g_j,
 \]
-which we plug back in to get $\nabla w_i=w_i\big(\nabla g_i-\sum_jw_j\nabla g_j\big)$. Since $\sum_jw_j=1$ and $m=\sum_jw_j\,\xn{j}$,
+which we plug back in to get $\nabla w_i = w_i\big(\nabla g_i - \sum_jw_j\nabla g_j\big)$. Since $\sum_jw_j = 1$ and $m = \sum_jw_j\,\xn{j}$,
 \begin{align*}
-  \nabla g_i-\sum_jw_j\nabla g_j
-  &=\frac{t\,\xn{i}-x}{(1-t)^2}-\sum_jw_j\Big(\frac{t\,\xn{j}-x}{(1-t)^2}\Big)
-   =\frac{1}{(1-t)^2}\Big(t\,\xn{i}-x-\sum_jw_j(t\,\xn{j}-x)\Big)\\
-  &=\frac{1}{(1-t)^2}\big(t\,\xn{i}-x-t\,m+x\big)=\frac{t}{(1-t)^2}\,(\xn{i}-m).
+  \nabla g_i - \sum_jw_j\nabla g_j
+  &= \frac{t\,\xn{i} - x}{(1 - t)^2} - \sum_jw_j\Big(\frac{t\,\xn{j} - x}{(1 - t)^2}\Big)
+   = \frac{1}{(1 - t)^2}\Big(t\,\xn{i} - x - \sum_jw_j(t\,\xn{j} - x)\Big)\\
+  &= \frac{1}{(1 - t)^2}\big(t\,\xn{i} - x - t\,m + x\big) = \frac{t}{(1 - t)^2}\,(\xn{i} - m).
 \end{align*}
-So $\nabla w_i=\frac{t}{(1-t)^2}\,w_i\,(\xn{i}-m)$, which we substitute in $\nabla_xm=\sum_i\xn{i}(\nabla w_i)^\top$ to get
+So $\nabla w_i = \frac{t}{(1 - t)^2}\,w_i\,(\xn{i} - m)$, which we substitute in $\nabla_xm = \sum_i\xn{i}(\nabla w_i)^\top$ to get
 \[
-  \nabla_xm=\sum_i\xn{i}\Big(\frac{t}{(1-t)^2}\,w_i\,(\xn{i}-m)\Big)^\top
-  =\frac{t}{(1-t)^2}\sum_iw_i\,\xn{i}(\xn{i}-m)^\top .
+  \nabla_xm = \sum_i\xn{i}\Big(\frac{t}{(1 - t)^2}\,w_i\,(\xn{i} - m)\Big)^\top
+  = \frac{t}{(1 - t)^2}\sum_iw_i\,\xn{i}(\xn{i} - m)^\top .
 \]
 Notice that the weighted sum of deviations from the mean is zero:
 \[
-  \sum_iw_i\,(\xn{i}-m)=\sum_iw_i\,\xn{i}-m\sum_iw_i=m-m=0 .
+  \sum_iw_i\,(\xn{i} - m) = \sum_iw_i\,\xn{i} - m\sum_iw_i = m - m = 0 .
 \]
-Therefore $\sum_iw_i\,m\,(\xn{i}-m)^\top=0$, and subtracting this zero matrix does not change the value, so
+Therefore $\sum_iw_i\,m\,(\xn{i} - m)^\top = 0$, and subtracting this zero matrix does not change the value, so
 \[
-  \nabla_xm=\frac{t}{(1-t)^2}\sum_iw_i\,(\xn{i}-m)(\xn{i}-m)^\top=\frac{t}{(1-t)^2}\,C .
+  \nabla_xm = \frac{t}{(1 - t)^2}\sum_iw_i\,(\xn{i} - m)(\xn{i} - m)^\top = \frac{t}{(1 - t)^2}\,C .
 \]
-With $\nabla_xu_t=\frac{1}{1-t}\nabla_xm-\frac{1}{1-t}I$ this gives \eqref{eq:jac}. \qed
+With $\nabla_xu_t = \frac{1}{1 - t}\nabla_xm - \frac{1}{1 - t}I$ this gives \eqref{eq:jac}. \qed
 
 \section{Proof of Theorem~\ref{thm:mdot}}\label{app:mdot}
 
-Fix a trajectory $x=x_t$ with $\dot x=u_t(x)$ and write a dot for the total derivative $\frac{d}{dt}$ along it. As before, $w_i=e^{g_i}/\sum_je^{g_j}$ and $g_i=-\frac{\|x-t\,\xn{i}\|^2}{2r^2}$ with $r=1-t$. Since the training points are constant, $\dot m=\sum_i\dot w_i\,\xn{i}$, and differentiating $\log w_i=g_i-\log\sum_je^{g_j}$ in time gives the same softmax rule as for the spatial gradient,
+Fix a trajectory $x = x_t$ with $\dot x = u_t(x)$ and write a dot for the total derivative $\frac{d}{dt}$ along it. As before, $w_i = e^{g_i}/\sum_je^{g_j}$ and $g_i = -\frac{\|x - t\,\xn{i}\|^2}{2r^2}$ with $r = 1 - t$. Since the training points are constant, $\dot m = \sum_i\dot w_i\,\xn{i}$, and differentiating $\log w_i = g_i - \log\sum_je^{g_j}$ in time gives the same softmax rule as for the spatial gradient,
 \[
-  \dot w_i=w_i\Big(\dot g_i-\sum_jw_j\,\dot g_j\Big).
+  \dot w_i = w_i\Big(\dot g_i - \sum_jw_j\,\dot g_j\Big).
 \]
-Denote $\bar g=\sum_jw_j\,\dot g_j$; hence $\dot m=\sum_iw_i\,\xn{i}(\dot g_i-\bar g)$. Since $\sum_iw_i(\dot g_i-\bar g)=0$, we may subtract $m$ times this zero:
+Denote $\bar g = \sum_jw_j\,\dot g_j$; hence $\dot m = \sum_iw_i\,\xn{i}(\dot g_i - \bar g)$. Since $\sum_iw_i(\dot g_i - \bar g) = 0$, we may subtract $m$ times this zero:
 \[
-  \dot m=\sum_iw_i\,(\xn{i}-m)(\dot g_i-\bar g)=\sum_iw_i\,(\xn{i}-m)\,\dot g_i ,
+  \dot m = \sum_iw_i\,(\xn{i} - m)(\dot g_i - \bar g) = \sum_iw_i\,(\xn{i} - m)\,\dot g_i ,
 \]
-where the last step uses $\sum_iw_i(\xn{i}-m)=0$. Any part of $\dot g_i$ that does not depend on $i$ contributes nothing to $\dot m$, so we only need to track the $i$-dependent part of $\dot g_i$.
+where the last step uses $\sum_iw_i(\xn{i} - m) = 0$. Any part of $\dot g_i$ that does not depend on $i$ contributes nothing to $\dot m$, so we only need to track the $i$-dependent part of $\dot g_i$.
 
-Recall $\frac{d}{dt}\frac{1}{2r^2}=\frac{1}{r^3}$ and $\frac{d}{dt}(x-t\,\xn{i})=u-\xn{i}$. Then
+Recall $\frac{d}{dt}\frac{1}{2r^2} = \frac{1}{r^3}$ and $\frac{d}{dt}(x - t\,\xn{i}) = u - \xn{i}$. Then
 \begin{align*}
-  \dot g_i&=-\frac{(x-t\,\xn{i})\cdot(u-\xn{i})}{r^2}-\frac{\|x-t\,\xn{i}\|^2}{r^3}\\
-  &=\frac{x\cdot\xn{i}+t\,u\cdot\xn{i}-t\|\xn{i}\|^2}{r^2}+\frac{2t\,x\cdot\xn{i}-t^2\|\xn{i}\|^2}{r^3}
-   +\underbrace{\Big[-\frac{x\cdot u}{r^2}-\frac{\|x\|^2}{r^3}\Big]}_{\text{does not depend on }i}.
+  \dot g_i&= -\frac{(x - t\,\xn{i}) \cdot (u - \xn{i})}{r^2} - \frac{\|x - t\,\xn{i}\|^2}{r^3}\\
+  &= \frac{x \cdot \xn{i} + t\,u \cdot \xn{i} - t\|\xn{i}\|^2}{r^2} + \frac{2t\,x \cdot \xn{i} - t^2\|\xn{i}\|^2}{r^3}
+   + \underbrace{\Big[-\frac{x \cdot u}{r^2} - \frac{\|x\|^2}{r^3}\Big]}_{\text{does not depend on }i}.
 \end{align*}
 Collecting the part linear in $\xn{i}$ and the quadratic part,
 \[
-  \dot g_i=\xn{i}\cdot\underbrace{\Big[\frac{x+t\,u}{r^2}+\frac{2t\,x}{r^3}\Big]}_{=:\,b}
-  +\|\xn{i}\|^2\Big[-\frac{t}{r^2}-\frac{t^2}{r^3}\Big]
-  +\Big[-\frac{x\cdot u}{r^2}-\frac{\|x\|^2}{r^3}\Big].
+  \dot g_i = \xn{i} \cdot \underbrace{\Big[\frac{x + t\,u}{r^2} + \frac{2t\,x}{r^3}\Big]}_{=:\,b}
+  + \|\xn{i}\|^2\Big[-\frac{t}{r^2} - \frac{t^2}{r^3}\Big]
+  + \Big[-\frac{x \cdot u}{r^2} - \frac{\|x\|^2}{r^3}\Big].
 \]
-Simplifying $b$ using $r+2t=1+t$, and the quadratic coefficient using $r+t=1$:
+Simplifying $b$ using $r + 2t = 1 + t$, and the quadratic coefficient using $r + t = 1$:
 \[
-  b=\frac{r(x+t\,u)+2t\,x}{r^3}=\frac{(1+t)\,x+t\,r\,u}{r^3},\qquad
-  -\frac{t}{r^2}-\frac{t^2}{r^3}=-\frac{t\,r+t^2}{r^3}=-\frac{t(r+t)}{r^3}=-\frac{t}{r^3}.
+  b = \frac{r(x + t\,u) + 2t\,x}{r^3} = \frac{(1 + t)\,x + t\,r\,u}{r^3},\qquad
+  -\frac{t}{r^2} - \frac{t^2}{r^3} = -\frac{t\,r + t^2}{r^3} = -\frac{t(r + t)}{r^3} = -\frac{t}{r^3}.
 \]
 Substituting the above into $\dot m$:
 \[
-  \dot m=\Big(\sum_iw_i\,(\xn{i}-m)(\xn{i})^\top\Big)b-\frac{t}{r^3}\sum_iw_i\,(\xn{i}-m)\,\|\xn{i}\|^2 .
+  \dot m = \Big(\sum_iw_i\,(\xn{i} - m)(\xn{i})^\top\Big)b - \frac{t}{r^3}\sum_iw_i\,(\xn{i} - m)\,\|\xn{i}\|^2 .
 \]
-For the first sum, $(\xn{i})^\top=(\xn{i}-m)^\top+m^\top$, where the $m^\top$ part gives $\big(\sum_iw_i(\xn{i}-m)\big)m^\top=0$, so the first sum equals $C$. For the second sum, let $\delta_i=\xn{i}-m$, so that $\sum_iw_i\delta_i=0$ and $\|\xn{i}\|^2=\|m\|^2+2\,\delta_i^\top m+\|\delta_i\|^2$. Then
+For the first sum, $(\xn{i})^\top = (\xn{i} - m)^\top + m^\top$, where the $m^\top$ part gives $\big(\sum_iw_i(\xn{i} - m)\big)m^\top = 0$, so the first sum equals $C$. For the second sum, let $\delta_i = \xn{i} - m$, so that $\sum_iw_i\delta_i = 0$ and $\|\xn{i}\|^2 = \|m\|^2 + 2\,\delta_i^\top m + \|\delta_i\|^2$. Then
 \[
   \sum_iw_i\,\delta_i\,\|\xn{i}\|^2
-  =\underbrace{\Big(\sum_iw_i\delta_i\Big)}_{=0}\|m\|^2
-  +2\underbrace{\sum_iw_i\,\delta_i\delta_i^\top}_{=C}\,m
-  +\underbrace{\sum_iw_i\,\|\delta_i\|^2\delta_i}_{=\kappa}
-  =2\,Cm+\kappa .
+  = \underbrace{\Big(\sum_iw_i\delta_i\Big)}_{= 0}\|m\|^2
+  + 2\underbrace{\sum_iw_i\,\delta_i\delta_i^\top}_{= C}\,m
+  + \underbrace{\sum_iw_i\,\|\delta_i\|^2\delta_i}_{= \kappa}
+  = 2\,Cm + \kappa .
 \]
 Therefore
 \[
-  \dot m=Cb-\frac{t}{r^3}\big(2\,Cm+\kappa\big)=C\Big(b-\frac{2t\,m}{r^3}\Big)-\frac{t\,\kappa}{r^3}.
+  \dot m = Cb - \frac{t}{r^3}\big(2\,Cm + \kappa\big) = C\Big(b - \frac{2t\,m}{r^3}\Big) - \frac{t\,\kappa}{r^3}.
 \]
-Finally, since $r\,u=m-x$, we have $t\,r\,u=t\,m-t\,x$, and
+Finally, since $r\,u = m - x$, we have $t\,r\,u = t\,m - t\,x$, and
 \[
-  b-\frac{2t\,m}{r^3}=\frac{(1+t)\,x+t\,m-t\,x-2t\,m}{r^3}=\frac{x-t\,m}{r^3}=\frac{r\,\eps}{r^3}=\frac{\eps}{r^2},
+  b - \frac{2t\,m}{r^3} = \frac{(1 + t)\,x + t\,m - t\,x - 2t\,m}{r^3} = \frac{x - t\,m}{r^3} = \frac{r\,\eps}{r^3} = \frac{\eps}{r^2},
 \]
-which gives $\dot m=\frac{C\eps}{(1-t)^2}-\frac{t\kappa}{(1-t)^3}$, and with $\ddot x=\frac{\dot m}{1-t}$ the second formula in \eqref{eq:mdot}. \qed
+which gives $\dot m = \frac{C\eps}{(1 - t)^2} - \frac{t\kappa}{(1 - t)^3}$, and with $\ddot x = \frac{\dot m}{1 - t}$ the second formula in \eqref{eq:mdot}. \qed
 
 \section{Proofs of the local bounds}\label{app:bounds}
 
 \begin{proof}[Proof of Lemma~\ref{lem:tail}]
-From $w_i=e^{g_i}/\sum_je^{g_j}$ we get $\frac{w_i}{w_{i^\star}}=e^{g_i-g_{i^\star}}$. For $i\notin A$, $g_i-g_{i^\star}<-\log\frac N\delta$, so $w_i<w_{i^\star}\cdot\frac\delta N\le\frac\delta N$. There are at most $N$ such points, so their total weight is at most $N\cdot\frac\delta N=\delta$.
+From $w_i = e^{g_i}/\sum_je^{g_j}$ we get $\frac{w_i}{w_{i^\star}} = e^{g_i - g_{i^\star}}$. For $i \notin A$, $g_i - g_{i^\star} < -\log\frac N\delta$, so $w_i < w_{i^\star} \cdot \frac\delta N \le \frac\delta N$. There are at most $N$ such points, so their total weight is at most $N \cdot \frac\delta N = \delta$.
 \end{proof}
 
 \begin{proof}[Proof of \eqref{eq:lam}]
-For a fixed unit vector $v\in\R^d$, $v^\top Cv=\sum_iw_i\big(v\cdot(\xn{i}-m)\big)^2$, which is the weighted variance of the numbers $v\cdot\xn{i}$. A variance is the smallest mean squared deviation, so for any point $c\in\R^d$,
+For a fixed unit vector $v \in \R^d$, $v^\top Cv = \sum_iw_i\big(v \cdot (\xn{i} - m)\big)^2$, which is the weighted variance of the numbers $v \cdot \xn{i}$. A variance is the smallest mean squared deviation, so for any point $c \in \R^d$,
 \[
-  \sum_iw_i\big(v\cdot(\xn{i}-m)\big)^2\le\sum_iw_i\big(v\cdot(\xn{i}-c)\big)^2,
+  \sum_iw_i\big(v \cdot (\xn{i} - m)\big)^2 \le \sum_iw_i\big(v \cdot (\xn{i} - c)\big)^2,
 \]
-because the right-hand side equals the left-hand side plus $\big(v\cdot(m-c)\big)^2$. Choice of $c$: among the active images, let $\xn{a}$ have the smallest value of $v\cdot\xn{i}$ and $\xn{b}$ the largest, and take $c=\frac12(\xn{a}+\xn{b})$, so every active image is within half the active spread of $c$.
+because the right-hand side equals the left-hand side plus $\big(v \cdot (m - c)\big)^2$. Choice of $c$: among the active images, let $\xn{a}$ have the smallest value of $v \cdot \xn{i}$ and $\xn{b}$ the largest, and take $c = \frac12(\xn{a} + \xn{b})$, so every active image is within half the active spread of $c$.
 
-\emph{Case 1} ($i\in A$): $v\cdot\xn{i}\in[v\cdot\xn{a},v\cdot\xn{b}]$, so $|v\cdot(\xn{i}-c)|\le\frac12|v\cdot(\xn{b}-\xn{a})|\le\frac{D_A}{2}$.
+\emph{Case 1} ($i \in A$): $v \cdot \xn{i} \in [v \cdot \xn{a},v \cdot \xn{b}]$, so $|v \cdot (\xn{i} - c)| \le \frac12|v \cdot (\xn{b} - \xn{a})| \le \frac{D_A}{2}$.
 
-\emph{Case 2} ($i\notin A$): $|v\cdot(\xn{i}-c)|\le\|\xn{i}-c\|\le\frac12\|\xn{i}-\xn{a}\|+\frac12\|\xn{i}-\xn{b}\|\le D$.
+\emph{Case 2} ($i \notin A$): $|v \cdot (\xn{i} - c)| \le \|\xn{i} - c\| \le \frac12\|\xn{i} - \xn{a}\| + \frac12\|\xn{i} - \xn{b}\| \le D$.
 
-Using $\sum_{i\in A}w_i\le1$ and $\sum_{i\notin A}w_i\le\delta$,
+Using $\sum_{i \in A}w_i \le 1$ and $\sum_{i \notin A}w_i \le \delta$,
 \[
-  v^\top Cv\le\sum_{i\in A}w_i\frac{D_A^2}{4}+\sum_{i\notin A}w_iD^2\le\frac{D_A^2}{4}+\delta D^2 .
+  v^\top Cv \le \sum_{i \in A}w_i\frac{D_A^2}{4} + \sum_{i \notin A}w_iD^2 \le \frac{D_A^2}{4} + \delta D^2 .
 \]
-This holds for every unit $v$, and $\lmax(C)=\max_{\|v\|=1}v^\top Cv$.
+This holds for every unit $v$, and $\lmax(C) = \max_{\|v\| = 1}v^\top Cv$.
 \end{proof}
 
 \begin{proof}[Proof of \eqref{eq:kap}]
-Write $\delta_i=\xn{i}-m$. By the triangle inequality, $\|\kappa\|=\big\|\sum_iw_i\|\delta_i\|^2\delta_i\big\|\le\sum_iw_i\|\delta_i\|^3$, so we need to know how far each image is from $m$. Since $\sum_jw_j=1$, we can write $\xn{i}-m=\sum_jw_j(\xn{i}-\xn{j})$. For $i\notin A$: $\|\delta_i\|\le\sum_jw_jD=D$. For $i\in A$: $\|\delta_i\|\le\sum_{j\in A}w_jD_A+\sum_{j\notin A}w_jD\le D_A+\delta D$. Splitting the sum over $i$ in the same way,
+Write $\delta_i = \xn{i} - m$. By the triangle inequality, $\|\kappa\| = \big\|\sum_iw_i\|\delta_i\|^2\delta_i\big\| \le \sum_iw_i\|\delta_i\|^3$, so we need to know how far each image is from $m$. Since $\sum_jw_j = 1$, we can write $\xn{i} - m = \sum_jw_j(\xn{i} - \xn{j})$. For $i \notin A$: $\|\delta_i\| \le \sum_jw_jD = D$. For $i \in A$: $\|\delta_i\| \le \sum_{j \in A}w_jD_A + \sum_{j \notin A}w_jD \le D_A + \delta D$. Splitting the sum over $i$ in the same way,
 \[
-  \|\kappa\|\le\sum_{i\in A}w_i(D_A+\delta D)^3+\sum_{i\notin A}w_iD^3\le(D_A+\delta D)^3+\delta D^3 .\qedhere
+  \|\kappa\| \le \sum_{i \in A}w_i(D_A + \delta D)^3 + \sum_{i \notin A}w_iD^3 \le (D_A + \delta D)^3 + \delta D^3 .\qedhere
 \]
 \end{proof}
 
 \begin{proof}[Proof of \eqref{eq:local}]
-Using $\|C\eps\|\le\lmax(C)\,\|\eps\|$ in \eqref{eq:mdot},
+Using $\|C\eps\| \le \lmax(C)\,\|\eps\|$ in \eqref{eq:mdot},
 \[
-  \|\dot m\|\le\frac{\lmax(C)\,\|\eps\|}{(1-t)^2}+\frac{t\,\|\kappa\|}{(1-t)^3},
+  \|\dot m\| \le \frac{\lmax(C)\,\|\eps\|}{(1 - t)^2} + \frac{t\,\|\kappa\|}{(1 - t)^3},
 \]
 and inserting the upper bounds \eqref{eq:lam} and \eqref{eq:kap} gives \eqref{eq:local}.
 \end{proof}
 
 \section{Proof of Proposition~\ref{prop:est}}\label{app:est}
 
-Let $h=h_{k-1}$, let $x(t)$ be the exact trajectory through $x_{k-1}$, and let $M(t)=m_t(x(t))$, so that $\dot M=\dot m$ and $\hat x_1^{(k-1)}=M(t_{k-1})$. The estimate differs from $\dot M(t_{k-1})$ for two reasons.
+Let $h = h_{k - 1}$, let $x(t)$ be the exact trajectory through $x_{k - 1}$, and let $M(t) = m_t(x(t))$, so that $\dot M = \dot m$ and $\hat x_1^{(k - 1)} = M(t_{k - 1})$. The estimate differs from $\dot M(t_{k - 1})$ for two reasons.
 
-\emph{(1)} $x_k$ was produced by an Euler step, so it is not necessarily on the exact trajectory. By the local error formula \eqref{eq:euler}, $x_k=x(t_k)+e$ with $\|e\|=O(h^2)$. Expanding $m$ in space around $x(t_k)$,
+\emph{(1)} $x_k$ was produced by an Euler step, so it is not necessarily on the exact trajectory. By the local error formula \eqref{eq:euler}, $x_k = x(t_k) + e$ with $\|e\| = O(h^2)$. Expanding $m$ in space around $x(t_k)$,
 \[
-  m_{t_k}(x_k)=M(t_k)+\nabla_xm\;e+O(\|e\|^2),
+  m_{t_k}(x_k) = M(t_k) + \nabla_xm\;e + O(\|e\|^2),
 \]
-where $\nabla_xm=\frac{t}{(1-t)^2}C$ and $\lmax(C)\le D^2$ for a finite training set, hence $m_{t_k}(x_k)=M(t_k)+O(h^2)$.
+where $\nabla_xm = \frac{t}{(1 - t)^2}C$ and $\lmax(C) \le D^2$ for a finite training set, hence $m_{t_k}(x_k) = M(t_k) + O(h^2)$.
 
-\emph{(2)} A difference quotient is not a derivative, and Taylor in time gives $M(t_k)=M(t_{k-1})+h\,\dot M(t_{k-1})+O(h^2)$.
+\emph{(2)} A difference quotient is not a derivative, and Taylor in time gives $M(t_k) = M(t_{k - 1}) + h\,\dot M(t_{k - 1}) + O(h^2)$.
 
 Combining both,
 \[
-  \widehat{\dot m}_k=\frac{M(t_k)+O(h^2)-M(t_{k-1})}{h}=\frac{h\,\dot M(t_{k-1})+O(h^2)}{h}=\dot m(t_{k-1})+O(h). \qed
+  \widehat{\dot m}_k = \frac{M(t_k) + O(h^2) - M(t_{k - 1})}{h} = \frac{h\,\dot M(t_{k - 1}) + O(h^2)}{h} = \dot m(t_{k - 1}) + O(h). \qed
 \]
 
 \section{U-Net architecture}\label{app:unet}
 
 This appendix and the next specify the two networks of Section~\ref{sec:experiments} completely. All numbers are the values in \texttt{configs/networks.toml} of the repository.
 
-\paragraph{Shared conventions.} Both networks are velocity models $v_\theta(x,t)$: they receive a noisy image and a time and return a velocity of the same shape. The flat vector $x\in\R^d$ of Section~\ref{sec:setup} is reshaped to $c\times S\times S$ with $d=cS^2$, where $c=1$, $S=28$ for MNIST and Fashion-MNIST and $c=3$, $S=32$ for CIFAR-10. Pixel values are scaled to $[-1,1]$.
+\paragraph{Shared conventions.} Both networks are velocity models $v_\theta(x,t)$: they receive a noisy image and a time and return a velocity of the same shape. The flat vector $x \in \R^d$ of Section~\ref{sec:setup} is reshaped to $c \times S \times S$ with $d = cS^2$, where $c = 1$, $S = 28$ for MNIST and Fashion-MNIST and $c = 3$, $S = 32$ for CIFAR-10. Pixel values are scaled to $[-1,1]$.
 
-Both networks work in pixel space; there is no autoencoder and no latent space \citep{rombach2022ldm}. There are two reasons. The images are small, so pixel space is affordable: with patch size $p=2$ a $28\times28$ image gives $196$ tokens. More importantly, the exact field \eqref{eq:u} is defined by the training images themselves, and its trajectories end on them. A network trained on latents $E(\xn{i})$ would have to be compared with the exact field of the encoded training set, and the decoder would add a second source of error that cannot be separated from the error of the flow.
+Both networks work in pixel space, without an autoencoder or a latent space \citep{rombach2022ldm}, for two reasons. First, the images are small enough that pixel space is affordable: with patch size $p = 2$ a $28 \times 28$ image gives $196$ tokens. Second, and more importantly, the exact field \eqref{eq:u} is defined by the training images themselves, and its trajectories end on them. A network trained on latents $E(\xn{i})$ would have to be compared with the exact field of the encoded training set, and the decoder would add a second source of error that cannot be separated from the error of the flow.
 
-Both networks are unconditional. The only side input is the time $t$, so there is no class or text embedding, no cross-attention and no in-context conditioning token. Neither network uses dropout.
+Both networks are unconditional and take the time $t$ as their only side input, so there is no class or text embedding, no cross-attention and no in-context conditioning token. Neither of them uses dropout.
 
-\paragraph{Time embedding.} The scalar $t\in[0,1]$ is first expanded by a fixed sinusoidal embedding of even width $d_e$. With $s=1000\,t$ and $\omega_j=10000^{-2j/d_e}$ for $j=0,\dots,\frac{d_e}{2}-1$,
+\paragraph{Time embedding.} The scalar $t \in [0,1]$ is first expanded by a fixed sinusoidal embedding of even width $d_e$. With $s = 1000\,t$ and $\omega_j = 10000^{-2j/d_e}$ for $j = 0,\dots,\frac{d_e}{2} - 1$,
 $$
-  \phi(t)=\big[\cos(\omega_0s),\dots,\cos(\omega_{d_e/2-1}s),\ \sin(\omega_0s),\dots,\sin(\omega_{d_e/2-1}s)\big]\in\R^{d_e}.
+  \phi(t) = \big[\cos(\omega_0s),\dots,\cos(\omega_{d_e/2 - 1}s),\ \sin(\omega_0s),\dots,\sin(\omega_{d_e/2 - 1}s)\big] \in \R^{d_e}.
 $$
 This is the usual embedding up to the order of the entries. A two-layer MLP then gives the time vector
 $$
-  e=W_2\,\mathrm{SiLU}\big(W_1\,\phi(t)+b_1\big)+b_2\in\R^{d_e},\qquad \mathrm{SiLU}(z)=\frac{z}{1+e^{-z}},
+  e = W_2\,\mathrm{SiLU}\big(W_1\,\phi(t) + b_1\big) + b_2 \in \R^{d_e},\qquad \mathrm{SiLU}(z) = \frac{z}{1 + e^{-z}},
 $$
-with both layers of width $d_e$. The U-Net uses $d_e=128$. The DiT of Appendix~\ref{app:dit} uses the same construction with $d_e$ equal to its token width.
+with both layers of width $d_e$. The U-Net uses $d_e = 128$, and the DiT of Appendix~\ref{app:dit} uses the same construction with $d_e$ equal to its token width.
 
 \paragraph{Residual block.} The U-Net is built from residual blocks. A block with $c_{\mathrm{in}}$ input and $c_{\mathrm{out}}$ output channels maps a feature map $z$ and the time vector $e$ to
 \begin{align*}
-  a&=\mathrm{Conv}_{3\times3}\big(\mathrm{SiLU}(\mathrm{GN}(z))\big)+W_e\,e+b_e,\\
-  z'&=\mathrm{Conv}_{3\times3}\big(\mathrm{SiLU}(\mathrm{GN}(a))\big)+\mathrm{skip}(z).
+  a&= \mathrm{Conv}_{3 \times 3}\big(\mathrm{SiLU}(\mathrm{GN}(z))\big) + W_e\,e + b_e,\\
+  z'&= \mathrm{Conv}_{3 \times 3}\big(\mathrm{SiLU}(\mathrm{GN}(a))\big) + \mathrm{skip}(z).
 \end{align*}
-$\mathrm{GN}$ is group normalisation \citep{wu2018groupnorm} with $8$ groups, $\epsilon=10^{-5}$ and a learned scale and shift per channel. Both convolutions have stride $1$ and zero padding $1$, so the resolution is kept. $W_e\in\R^{c_{\mathrm{out}}\times d_e}$ is a linear layer whose output is added to every spatial position, which is how the block is told the noise level. $\mathrm{skip}$ is the identity if $c_{\mathrm{in}}=c_{\mathrm{out}}$ and a $1\times1$ convolution otherwise. The activation function is SiLU everywhere in the U-Net.
+Here $\mathrm{GN}$ is group normalisation \citep{wu2018groupnorm} with $8$ groups, $\epsilon = 10^{-5}$ and a learned scale and shift per channel. Both convolutions have stride $1$ and zero padding $1$, so the resolution is kept. The output of the linear layer $W_e \in \R^{c_{\mathrm{out}} \times d_e}$ is added to every spatial position, which is how the block is told the noise level, and $\mathrm{skip}$ is the identity if $c_{\mathrm{in}} = c_{\mathrm{out}}$ and a $1 \times 1$ convolution otherwise. SiLU is the only activation function in the U-Net.
 
-\paragraph{Self-attention block.} One self-attention block sits at the lowest resolution, where the feature map has $c_z=64$ channels. After group normalisation the $S'\times S'$ positions are read as $S'^2$ tokens $Z\in\R^{S'^2\times c_z}$ ($49$ tokens for MNIST, $64$ for CIFAR-10), and
+\paragraph{Self-attention block.} One self-attention block sits at the lowest resolution, where the feature map has $c_z = 64$ channels. After group normalisation the $S' \times S'$ positions are read as $S'^2$ tokens $Z \in \R^{S'^2 \times c_z}$ ($49$ tokens for MNIST, $64$ for CIFAR-10), and
 $$
-  Q=ZW_Q,\quad K=ZW_K,\quad V=ZW_V,\qquad
-  \mathrm{Attn}(Z)=\mathrm{softmax}\Big(\frac{QK^\top}{\sqrt{c_z}}\Big)V\,W_O,
+  Q = ZW_Q,\quad K = ZW_K,\quad V = ZW_V,\qquad
+  \mathrm{Attn}(Z) = \mathrm{softmax}\Big(\frac{QK^\top}{\sqrt{c_z}}\Big)V\,W_O,
 $$
-with the softmax taken over each row. This is scaled dot-product self-attention \citep{vaswani2017attention} with a single head, key dimension $c_z$, no bias terms and no mask, so every position attends to every other position. The result is reshaped to a feature map and added to the input of the block. There is no MLP after the attention and no positional embedding; the convolutions around it carry the position.
+with the softmax taken over each row. This is scaled dot-product self-attention \citep{vaswani2017attention} with a single head, key dimension $c_z$, no bias terms and no mask, so every position attends to every other position. The result is reshaped to a feature map and added to the input of the block. The block has no MLP after the attention and no positional embedding, since the convolutions around it carry the position.
 
-\paragraph{Layout.} Table~\ref{tab:unet} lists the network for $c=1$, $S=28$. The base width is $32$ channels and the three resolutions use $32$, $64$ and $64$ channels (multipliers $1,2,2$). The contracting path has one residual block per resolution; the expanding path has two. Downsampling is a $3\times3$ convolution with stride $2$ and padding $1$, which halves the resolution ($28\to14\to7$, and $32\to16\to8$ for CIFAR-10). Upsampling is nearest-neighbour interpolation to the resolution of the next skip connection followed by a $3\times3$ convolution. Skip connections concatenate along the channel axis: the output of the first convolution, of every residual block of the contracting path and of every downsampling convolution is stored, and each residual block of the expanding path receives its input concatenated with the most recently stored map that has not been used yet. This is why the expanding blocks in Table~\ref{tab:unet} have $128$, $96$ or $64$ input channels.
+\paragraph{Layout.} Table~\ref{tab:unet} lists the network for $c = 1$, $S = 28$. The base width is $32$ channels and the three resolutions use $32$, $64$ and $64$ channels (multipliers $1,2,2$). The contracting path has one residual block per resolution and the expanding path has two. Downsampling is a $3 \times 3$ convolution with stride $2$ and padding $1$, which halves the resolution ($28 \to 14 \to 7$, and $32 \to 16 \to 8$ for CIFAR-10). Upsampling is nearest-neighbour interpolation to the resolution of the next skip connection followed by a $3 \times 3$ convolution. Skip connections concatenate along the channel axis: the output of the first convolution, of every residual block of the contracting path and of every downsampling convolution is stored, and each residual block of the expanding path receives its input concatenated with the most recently stored map that has not been used yet. This is why the expanding blocks in Table~\ref{tab:unet} have $128$, $96$ or $64$ input channels.
 
 \begin{table}[h]
-\caption{The U-Net for a $1\times28\times28$ input. ``Res'' is the residual block and ``Attn'' the self-attention block defined above. For the expanding path the input channels include the concatenated skip connection.}\label{tab:unet}
+\caption{The U-Net for a $1 \times 28 \times 28$ input. "Res" is the residual block and "Attn" the self-attention block defined above. For the expanding path the input channels include the concatenated skip connection.}\label{tab:unet}
 \centering
 \begin{tabular}{llll}
 \toprule
 Stage & Resolution & Operation & Channels\\
 \midrule
-Input & $28$ & Conv $3\times3$ & $1\to32$\\
-Down 1 & $28$ & Res & $32\to32$\\
- & $28\to14$ & Conv $3\times3$, stride $2$ & $32\to32$\\
-Down 2 & $14$ & Res & $32\to64$\\
- & $14\to7$ & Conv $3\times3$, stride $2$ & $64\to64$\\
-Down 3 & $7$ & Res & $64\to64$\\
-Middle & $7$ & Res, Attn, Res & $64\to64$\\
-Up 3 & $7$ & Res, Res & $128\to64$, $128\to64$\\
- & $7\to14$ & nearest upsampling, Conv $3\times3$ & $64\to64$\\
-Up 2 & $14$ & Res, Res & $128\to64$, $96\to64$\\
- & $14\to28$ & nearest upsampling, Conv $3\times3$ & $64\to64$\\
-Up 1 & $28$ & Res, Res & $96\to32$, $64\to32$\\
-Output & $28$ & GN, SiLU, Conv $3\times3$ & $32\to1$\\
+Input & $28$ & Conv $3 \times 3$ & $1 \to 32$\\
+Down 1 & $28$ & Res & $32 \to 32$\\
+ & $28 \to 14$ & Conv $3 \times 3$, stride $2$ & $32 \to 32$\\
+Down 2 & $14$ & Res & $32 \to 64$\\
+ & $14 \to 7$ & Conv $3 \times 3$, stride $2$ & $64 \to 64$\\
+Down 3 & $7$ & Res & $64 \to 64$\\
+Middle & $7$ & Res, Attn, Res & $64 \to 64$\\
+Up 3 & $7$ & Res, Res & $128 \to 64$, $128 \to 64$\\
+ & $7 \to 14$ & nearest upsampling, Conv $3 \times 3$ & $64 \to 64$\\
+Up 2 & $14$ & Res, Res & $128 \to 64$, $96 \to 64$\\
+ & $14 \to 28$ & nearest upsampling, Conv $3 \times 3$ & $64 \to 64$\\
+Up 1 & $28$ & Res, Res & $96 \to 32$, $64 \to 32$\\
+Output & $28$ & GN, SiLU, Conv $3 \times 3$ & $32 \to 1$\\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\paragraph{Initialisation and size.} The weights and biases of every linear and convolutional layer are drawn uniformly from $\big[-\frac{1}{\sqrt{n_{\mathrm{in}}}},\frac{1}{\sqrt{n_{\mathrm{in}}}}\big]$, where $n_{\mathrm{in}}$ is the number of inputs of one output unit. The only exception is the last convolution, whose weight and bias start at zero, so the untrained network returns $v_\theta=0$. The network has $11$ residual blocks, one attention block and $1{,}074{,}529$ parameters for MNIST ($1{,}075{,}683$ for CIFAR-10).
+\paragraph{Initialisation and size.} The weights and biases of every linear and convolutional layer are drawn uniformly from $\big[-\frac{1}{\sqrt{n_{\mathrm{in}}}},\frac{1}{\sqrt{n_{\mathrm{in}}}}\big]$, where $n_{\mathrm{in}}$ is the number of inputs of one output unit. The only exception is the last convolution, whose weight and bias start at zero, so the untrained network returns $v_\theta = 0$. The network has $11$ residual blocks, one attention block and $1{,}074{,}529$ parameters for MNIST ($1{,}075{,}683$ for CIFAR-10).
 
 \paragraph{Relation to the original U-Net.} The contracting path, the expanding path and the skip connections that let detail bypass the bottleneck are those of \citet{ronneberger2015unet}. The rest follows the U-Nets used for diffusion models \citep{ho2020ddpm}: residual blocks with group normalisation and SiLU in place of plain convolutions with ReLU, strided convolutions in place of max pooling, interpolation followed by a convolution in place of transposed convolutions, padded convolutions so that no cropping is needed, a time input in every block, and self-attention at the lowest resolution.
 
@@ -647,73 +667,73 @@ Output & $28$ & GN, SiLU, Conv $3\times3$ & $32\to1$\\
 
 The second network is a Diffusion Transformer (DiT) \citep{peebles2023dit}. The conventions, the time embedding and the SiLU activation are those of Appendix~\ref{app:unet}. Table~\ref{tab:dit} collects the sizes.
 
-\paragraph{Patchify and token embedding.} The image $x\in\R^{c\times S\times S}$ is cut into non-overlapping $p\times p$ patches with $p=2$. Each patch is flattened to a vector of $p^2c$ numbers and mapped by one linear layer with bias to a token of width $d_{\mathrm{tok}}=192$. This gives $n=(S/p)^2$ tokens: $196$ for $S=28$ and $256$ for $S=32$. No autoencoder precedes this step; the patches are patches of pixels.
+\paragraph{Patchify and token embedding.} The image $x \in \R^{c \times S \times S}$ is cut into non-overlapping $p \times p$ patches with $p = 2$. Each patch is flattened to a vector of $p^2c$ numbers and mapped by one linear layer with bias to a token of width $d_{\mathrm{tok}} = 192$. This gives $n = (S/p)^2$ tokens: $196$ for $S = 28$ and $256$ for $S = 32$. No autoencoder precedes this step, so the patches are patches of pixels.
 
-Doubling the patch size to $p=4$ would give four times fewer tokens ($49$ for $S=28$) and sixteen times fewer attention pairs per layer, but every token would then have to produce $16$ pixels through the single linear layer at the output.
+Doubling the patch size to $p = 4$ would give four times fewer tokens ($49$ for $S = 28$) and sixteen times fewer attention pairs per layer, but every token would then have to produce $16$ pixels through the single linear layer at the output.
 
 \paragraph{Positional embedding.} Self-attention is permutation equivariant, so the position of a patch has to enter the network somewhere. We use a two-dimensional rotary positional embedding (RoPE) \citep{su2021roformer}. Nothing is added to the tokens,
 $$
-  Z^{(0)}=\mathrm{patchify}(x)\,W_{\mathrm{emb}}+b_{\mathrm{emb}}\in\R^{n\times d_{\mathrm{tok}}},
+  Z^{(0)} = \mathrm{patchify}(x)\,W_{\mathrm{emb}} + b_{\mathrm{emb}} \in \R^{n \times d_{\mathrm{tok}}},
 $$
-and the position enters inside every attention layer instead, through a rotation of the queries and keys that is defined in the paragraph on attention below. RoPE has no parameters. There is no class token.
+and the position enters inside every attention layer instead, through a rotation of the queries and keys that is defined in the paragraph on attention below. RoPE has no parameters, and we do not use a class token.
 
-\paragraph{Modulation vector.} The time embedding of Appendix~\ref{app:unet} with $d_e=d_{\mathrm{tok}}=192$ gives the modulation vector $e\in\R^{192}$. It is computed once per evaluation and read by every block.
+\paragraph{Modulation vector.} The time embedding of Appendix~\ref{app:unet} with $d_e = d_{\mathrm{tok}} = 192$ gives the modulation vector $e \in \R^{192}$. It is computed once per evaluation and read by every block.
 
-\paragraph{Multi-head self-attention.} All attention in the DiT is multi-head scaled dot-product self-attention \citep{vaswani2017attention} over the $n$ image tokens, with $n_h=6$ heads of dimension $d_h=d_{\mathrm{tok}}/n_h=32$. For tokens $Z\in\R^{n\times d_{\mathrm{tok}}}$ and head $j$,
+\paragraph{Multi-head self-attention.} All attention in the DiT is multi-head scaled dot-product self-attention \citep{vaswani2017attention} over the $n$ image tokens, with $n_h = 6$ heads of dimension $d_h = d_{\mathrm{tok}}/n_h = 32$. For tokens $Z \in \R^{n \times d_{\mathrm{tok}}}$ and head $j$,
 $$
-  Q_j=ZW_Q^{j}+b_Q^{j},\qquad K_j=ZW_K^{j}+b_K^{j},\qquad V_j=ZW_V^{j}+b_V^{j},
+  Q_j = ZW_Q^{j} + b_Q^{j},\qquad K_j = ZW_K^{j} + b_K^{j},\qquad V_j = ZW_V^{j} + b_V^{j},
 $$
-with $W_Q^j,W_K^j,W_V^j\in\R^{d_{\mathrm{tok}}\times d_h}$.
+with $W_Q^j,W_K^j,W_V^j \in \R^{d_{\mathrm{tok}} \times d_h}$.
 
-The positions enter here. Let token $i$ lie in row $r_i$ and column $c_i$ of the $(S/p)\times(S/p)$ grid of patches, both counted from $0$. Row $i$ of $Q_j$ and row $i$ of $K_j$ are each split into $d_h/2=16$ consecutive pairs of entries, and every pair $(a,b)$ is rotated in its plane,
+This is where the positions enter. Let token $i$ lie in row $r_i$ and column $c_i$ of the $(S/p) \times (S/p)$ grid of patches, both counted from $0$. Row $i$ of $Q_j$ and row $i$ of $K_j$ are each split into $d_h/2 = 16$ consecutive pairs of entries, and every pair $(a,b)$ is rotated in its plane,
 $$
-  (a,b)\mapsto(a\cos\theta-b\sin\theta,\ a\sin\theta+b\cos\theta).
+  (a,b) \mapsto (a\cos\theta - b\sin\theta,\ a\sin\theta + b\cos\theta).
 $$
-With $\omega_k=10000^{-k/(d_h/4)}$ for $k=0,\dots,\frac{d_h}{4}-1$, pair $k$ is rotated by $\theta=r_i\,\omega_k$ and pair $\frac{d_h}{4}+k$ by $\theta=c_i\,\omega_k$, so one half of every head encodes the row and the other half the column. The values $V_j$ are not rotated. Writing $\tilde Q_j$ and $\tilde K_j$ for the rotated matrices,
+With $\omega_k = 10000^{-k/(d_h/4)}$ for $k = 0,\dots,\frac{d_h}{4} - 1$, pair $k$ is rotated by $\theta = r_i\,\omega_k$ and pair $\frac{d_h}{4} + k$ by $\theta = c_i\,\omega_k$, so one half of every head encodes the row and the other half the column. The values $V_j$ are not rotated. Writing $\tilde Q_j$ and $\tilde K_j$ for the rotated matrices,
 $$
-  A_j=\mathrm{softmax}\Big(\frac{\tilde Q_j\tilde K_j^\top}{\sqrt{d_h}}\Big)V_j\in\R^{n\times d_h},
+  A_j = \mathrm{softmax}\Big(\frac{\tilde Q_j\tilde K_j^\top}{\sqrt{d_h}}\Big)V_j \in \R^{n \times d_h},
 $$
-with the softmax over each row. Rotations of the same plane compose by adding their angles, so the inner product of the rotated query of token $i$ and the rotated key of token $i'$ depends on the positions only through $r_i-r_{i'}$ and $c_i-c_{i'}$: the attention weights see relative position. The heads are concatenated and mapped by an output layer,
+with the softmax over each row. Rotations of the same plane compose by adding their angles, so the inner product of the rotated query of token $i$ and the rotated key of token $i'$ depends on the positions only through $r_i - r_{i'}$ and $c_i - c_{i'}$. In other words, the attention weights see relative position. The heads are concatenated and mapped by an output layer,
 $$
-  \mathrm{MHSA}(Z)=[A_1,\dots,A_{n_h}]\,W_O+b_O\in\R^{n\times d_{\mathrm{tok}}}.
+  \mathrm{MHSA}(Z) = [A_1,\dots,A_{n_h}]\,W_O + b_O \in \R^{n \times d_{\mathrm{tok}}}.
 $$
 There is no mask, so every token attends to all $n$ tokens, at a cost of $n^2$ pairs per head. Since the network is unconditional, there is no cross-attention.
 
-\paragraph{MLP.} The MLP of a block acts on each token separately and has two layers with one hidden layer of width $4\,d_{\mathrm{tok}}=768$:
+\paragraph{MLP.} The MLP of a block acts on each token separately and has two layers with one hidden layer of width $4\,d_{\mathrm{tok}} = 768$:
 $$
-  \mathrm{MLP}(z)=W_b\,\mathrm{GELU}(W_a z+b_a)+b_b,\qquad W_a\in\R^{768\times192},\ W_b\in\R^{192\times768}.
+  \mathrm{MLP}(z) = W_b\,\mathrm{GELU}(W_a z + b_a) + b_b,\qquad W_a \in \R^{768 \times 192},\ W_b \in \R^{192 \times 768}.
 $$
-GELU \citep{hendrycks2016gelu} is used in its $\tanh$ approximation, $\mathrm{GELU}(z)\approx\frac z2\big(1+\tanh\big(\sqrt{2/\pi}\,(z+0.044715\,z^3)\big)\big)$.
+GELU \citep{hendrycks2016gelu} is used in its $\tanh$ approximation, $\mathrm{GELU}(z) \approx \frac z2\big(1 + \tanh\big(\sqrt{2/\pi}\,(z + 0.044715\,z^3)\big)\big)$.
 
 \paragraph{One block.} A standard pre-norm transformer block is
 $$
-  Z\leftarrow Z+\mathrm{MHSA}(\mathrm{LN}(Z)),\qquad Z\leftarrow Z+\mathrm{MLP}(\mathrm{LN}(Z)),
+  Z \leftarrow Z + \mathrm{MHSA}(\mathrm{LN}(Z)),\qquad Z \leftarrow Z + \mathrm{MLP}(\mathrm{LN}(Z)),
 $$
 with layer normalisation $\mathrm{LN}$ \citep{ba2016layernorm} applied to each token. The DiT block keeps this structure and adds two things to each of the two residual branches, both driven by the modulation vector. One linear layer per block produces six vectors of width $d_{\mathrm{tok}}$,
 $$
-  (\gamma_1,\beta_1,\alpha_1,\gamma_2,\beta_2,\alpha_2)=W_{\mathrm{mod}}\,\mathrm{SiLU}(e)+b_{\mathrm{mod}}\in\R^{6\,d_{\mathrm{tok}}},
+  (\gamma_1,\beta_1,\alpha_1,\gamma_2,\beta_2,\alpha_2) = W_{\mathrm{mod}}\,\mathrm{SiLU}(e) + b_{\mathrm{mod}} \in \R^{6\,d_{\mathrm{tok}}},
 $$
 and the block computes
 \begin{align*}
-  Z&\leftarrow Z+\alpha_1\odot\mathrm{MHSA}\big((1+\gamma_1)\odot\mathrm{LN}(Z)+\beta_1\big),\\
-  Z&\leftarrow Z+\alpha_2\odot\mathrm{MLP}\big((1+\gamma_2)\odot\mathrm{LN}(Z)+\beta_2\big),
+  Z&\leftarrow Z + \alpha_1 \odot \mathrm{MHSA}\big((1 + \gamma_1) \odot \mathrm{LN}(Z) + \beta_1\big),\\
+  Z&\leftarrow Z + \alpha_2 \odot \mathrm{MLP}\big((1 + \gamma_2) \odot \mathrm{LN}(Z) + \beta_2\big),
 \end{align*}
 where $\odot$ multiplies each token entrywise by the same vector.
 
-\emph{(1) Scale and shift (adaptive layer norm).} $\mathrm{LN}$ here only standardises each token to zero mean and unit variance over its $d_{\mathrm{tok}}$ entries ($\epsilon=10^{-5}$) and has no learned scale or shift of its own. The scale $1+\gamma$ and the shift $\beta$ come from the time instead, so every block can rescale its features for the current noise level. This replaces feeding $t$ to the first layer only.
+\emph{(1) Scale and shift (adaptive layer norm).} $\mathrm{LN}$ here only standardises each token to zero mean and unit variance over its $d_{\mathrm{tok}}$ entries ($\epsilon = 10^{-5}$) and has no learned scale or shift of its own. The scale $1 + \gamma$ and the shift $\beta$ come from the time instead, so every block can rescale its features for the current noise level. This replaces feeding $t$ to the first layer only.
 
-\emph{(2) Gate.} The output of each residual branch is multiplied by $\alpha$ before it is added back. $W_{\mathrm{mod}}$ and $b_{\mathrm{mod}}$ start at zero, so at initialisation $\gamma=\beta=\alpha=0$, both branches contribute nothing and every block is the identity. In our implementation, as in \citet{peebles2023dit}, $\alpha$ is a vector with one entry per channel and not a single scalar.
+\emph{(2) Gate.} The output of each residual branch is multiplied by $\alpha$ before it is added back. $W_{\mathrm{mod}}$ and $b_{\mathrm{mod}}$ start at zero, so at initialisation $\gamma = \beta = \alpha = 0$, both branches contribute nothing and every block is the identity. In our implementation, as in \citet{peebles2023dit}, $\alpha$ is a vector with one entry per channel and not a single scalar.
 
-Together these two additions are the adaLN-Zero block of \citet{peebles2023dit}. The network has $6$ such blocks.
+Together these two additions give the adaLN-Zero block of \citet{peebles2023dit}, and the network stacks $6$ such blocks.
 
 \paragraph{Output layer.} After the last block, the tokens are normalised and modulated once more, without a gate, and mapped back to patches:
 $$
-  (\beta_{\mathrm{out}},\gamma_{\mathrm{out}})=W'_{\mathrm{mod}}\,\mathrm{SiLU}(e)+b'_{\mathrm{mod}}\in\R^{2\,d_{\mathrm{tok}}},
+  (\beta_{\mathrm{out}},\gamma_{\mathrm{out}}) = W'_{\mathrm{mod}}\,\mathrm{SiLU}(e) + b'_{\mathrm{mod}} \in \R^{2\,d_{\mathrm{tok}}},
 $$
 $$
-  Y=\big((1+\gamma_{\mathrm{out}})\odot\mathrm{LN}(Z)+\beta_{\mathrm{out}}\big)W_{\mathrm{out}}+b_{\mathrm{out}}\in\R^{n\times p^2c}.
+  Y = \big((1 + \gamma_{\mathrm{out}}) \odot \mathrm{LN}(Z) + \beta_{\mathrm{out}}\big)W_{\mathrm{out}} + b_{\mathrm{out}} \in \R^{n \times p^2c}.
 $$
-Each row of $Y$ is reshaped to a $p\times p$ patch with $c$ channels and the patches are put back in place, which gives the velocity in the shape of $x$. $W'_{\mathrm{mod}}$, $b'_{\mathrm{mod}}$, $W_{\mathrm{out}}$ and $b_{\mathrm{out}}$ start at zero, so the untrained network returns $v_\theta=0$, like the U-Net.
+Each row of $Y$ is reshaped to a $p \times p$ patch with $c$ channels and the patches are put back in place, which gives the velocity in the shape of $x$. $W'_{\mathrm{mod}}$, $b'_{\mathrm{mod}}$, $W_{\mathrm{out}}$ and $b_{\mathrm{out}}$ start at zero, so the untrained network returns $v_\theta = 0$, like the U-Net.
 
 \paragraph{Initialisation and size.} Apart from the zero-initialised layers named above, all linear layers are initialised as in Appendix~\ref{app:unet}. The network has $4{,}148{,}548$ parameters for MNIST ($4{,}151{,}628$ for CIFAR-10).
 
@@ -725,7 +745,7 @@ Each row of $Y$ is reshaped to a $p\times p$ patch with $c$ channels and the pat
 Quantity & Value\\
 \midrule
 Patch size $p$ & $2$\\
-Tokens $n$ & $196$ ($S=28$), $256$ ($S=32$)\\
+Tokens $n$ & $196$ ($S = 28$), $256$ ($S = 32$)\\
 Token width $d_{\mathrm{tok}}$ & $192$\\
 Blocks & $6$\\
 Attention heads $n_h$, head dimension $d_h$ & $6$, $32$\\
@@ -738,7 +758,7 @@ Time embedding width $d_e$ & $192$\\
 \end{tabular}
 \end{table}
 
-\paragraph{Relation to the original DiT.} The block, the patchify step and the zero initialisation are those of \citet{peebles2023dit}. Our network differs in four ways. It runs on pixels and not on the latent of an autoencoder. Its positional embedding is a rotary embedding inside every attention layer, whereas the original adds a fixed sine-cosine embedding to the tokens once. It has no class label, so the modulation vector is the time embedding alone. And it outputs only the velocity, with no additional covariance output. It is also far smaller than the smallest model of that paper.
+\paragraph{Relation to the original DiT.} The block, the patchify step and the zero initialisation are those of \citet{peebles2023dit}. Our network differs in four ways: it runs on pixels and not on the latent of an autoencoder; its positional embedding is a rotary embedding inside every attention layer, whereas the original adds a fixed sine-cosine embedding to the tokens once; it has no class label, so the modulation vector is the time embedding alone; and it outputs only the velocity, with no additional covariance output. It is also far smaller than the smallest model of that paper.
 
 \section{Additional experimental details}\label{app:details}
 
