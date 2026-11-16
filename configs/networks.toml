@@ -1,0 +1,46 @@
+# Architecture-dependent parameters: one table per network, each with its own
+# training table. Mathematical parameters (delta, tol, clipping) are in math.toml.
+# All values are starting points and have not been tuned by an experiment yet.
+
+[unet]
+base_channels = 32
+channel_mults = [1, 2, 2]   # one entry per resolution, e.g. 28 -> 14 -> 7
+num_res_blocks = 1          # residual blocks per resolution
+time_dim = 128              # width of the time embedding
+groups = 8                  # GroupNorm groups; must divide base_channels
+attention = true            # self-attention at the lowest resolution
+
+[unet.train]
+epochs = 20
+batch_size = 128
+learning_rate = 2e-4
+lr_schedule = "cosine"      # "cosine" or "constant", both after a linear warm-up
+warmup_steps = 500
+weight_decay = 0.0
+grad_clip = 1.0             # global gradient norm clip; 0 disables it
+ema_decay = 0.999           # 0 disables the EMA of the weights
+val_fraction = 0.05         # share of the data held out for validation; 0 disables it
+early_stopping = true       # needs val_fraction > 0
+patience = 5                # epochs without improvement before stopping
+min_delta = 0.0             # smallest decrease of the validation loss that counts
+
+[dit]
+patch_size = 4              # must divide the image height and width
+hidden_dim = 192
+depth = 6
+num_heads = 6               # must divide hidden_dim
+mlp_ratio = 4.0
+
+[dit.train]
+epochs = 20
+batch_size = 128
+learning_rate = 2e-4
+lr_schedule = "cosine"
+warmup_steps = 500
+weight_decay = 0.0
+grad_clip = 1.0
+ema_decay = 0.999
+val_fraction = 0.05
+early_stopping = true
+patience = 5
+min_delta = 0.0

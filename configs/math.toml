@@ -1,0 +1,23 @@
+# Hand-tuned parameters of the mathematics (paper sections 5 and 6).
+# Nothing here depends on a network architecture; see networks.toml for that.
+# All values are starting points and have not been tuned by an experiment yet.
+
+[active_set]
+# delta in A = {i : g_i >= g_istar - log(N / delta)}; the weight outside A is at most delta.
+delta = 0.01
+
+[sampler]
+# Algorithm 1 (curvature-adaptive Euler).
+tol = 0.01        # local error tolerance in h = sqrt(2 (1 - t) tol / ||mdot_hat||)
+h_min = 0.005     # lower clip of the step size
+h_max = 0.25      # upper clip of the step size
+h0 = 0.05         # fixed first step (no previous prediction at k = 0)
+max_steps = 256   # size of the padded buffers under jit; must be >= ceil(1 / h_min) + 1
+
+[spectral]
+# Power iteration used for lambda_max(C) and for the top eigenvalue of the Jacobian.
+power_iters = 100
+
+[numerics]
+# Rows per block in the pairwise-distance computation of the diameters D and D_A.
+diameter_chunk = 1024
