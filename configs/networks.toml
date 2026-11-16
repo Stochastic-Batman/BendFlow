@@ -11,7 +11,7 @@ groups = 8                  # GroupNorm groups; must divide base_channels
 attention = true            # self-attention at the lowest resolution
 
 [unet.train]
-epochs = 20
+epochs = 200
 batch_size = 128
 learning_rate = 2e-4
 lr_schedule = "cosine"      # "cosine" or "constant", both after a linear warm-up
@@ -32,7 +32,7 @@ num_heads = 6               # must divide hidden_dim; hidden_dim / num_heads mus
 mlp_ratio = 4.0
 
 [dit.train]
-epochs = 20
+epochs = 200
 batch_size = 128
 learning_rate = 2e-4
 lr_schedule = "cosine"
