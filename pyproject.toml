@@ -1,0 +1,42 @@
+[project]
+name = "bendflow"
+version = "0.1.0"
+description = "Closed-form trajectory curvature for flow matching via posterior moments, local active-set bounds on bending, curvature-adaptive Euler sampler with free step-size estimation"
+readme = "README.md"
+authors = [
+    { name = "Stochastic-Batman", email = "StochasticBatman@proton.me" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "datasets>=5.2.0",
+    "equinox>=0.13.8",
+    "jax>=0.12.0.1",
+    "matplotlib>=3.11.2",
+    "numpy>=2.5.5",
+    "optax>=0.2.9",
+    "tqdm>=4.70.1",
+]
+
+[project.optional-dependencies]
+cuda13 = ["jax[cuda13]"]
+cuda12 = ["jax[cuda12]"]
+
+[tool.uv]
+conflicts = [[{ extra = "cuda12" }, { extra = "cuda13" }]]
+
+[project.scripts]
+bendflow = "bendflow:main"
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "ruff>=0.17.5",
+]
+
+[tool.ruff]
+# Wide enough that ruff format keeps every function signature on one line.
+line-length = 200

@@ -40,6 +40,22 @@ The claim of the project is that difficulty is indecision. A path bends exactly 
 - a small U-Net and a small Diffusion Transformer trained with flow matching on the same data, to see where trained models follow the exact field and where they smooth it;
 - the curvature-adaptive sampler against a uniform grid at the same number of network evaluations.
 
+## Setup
+
+The code is written in JAX and managed with [uv](https://docs.astral.sh/uv/).
+
+    git clone https://github.com/Stochastic-Batman/BendFlow.git
+    cd BendFlow
+    uv sync                    # CPU
+    uv sync --extra cuda13     # NVIDIA GPU, CUDA 13 (Linux only)
+    uv sync --extra cuda12     # NVIDIA GPU, CUDA 12 (Linux only)
+
+Check the installation and run the tests:
+
+    uv run python -c "import jax; print(jax.__version__, jax.devices())"
+    uv run pytest
+
+Python 3.12 is pinned in `.python-version`; uv installs it if it is missing.
 
 ## What is new and what is not
 
