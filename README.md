@@ -2,7 +2,7 @@
 
 Closed-form trajectory curvature for flow matching via posterior moments, local active-set bounds on bending, curvature-adaptive Euler sampler with free step-size estimation.
 
-Project for the Visual Generative Models course at Universität des Saarlandes, taught by Professor Jan Eric Lennsen, with Hevra Pettekaya as teaching assistant (PhD student). Winter semester 2026/27.
+Project for the Visual Generative Models course at Universität des Saarlandes, taught by Professor Jan Eric Lenssen, with Hevra Pettekaya as teaching assistant (PhD student). Winter semester 2026/27.
 
 ## The problem (in natural language)
 
@@ -20,7 +20,7 @@ At every noisy point the model is implicitly answering "which training image did
 - its covariance `C`, how unsure that guess is,
 - its third moment `κ`, how lopsided the uncertainty is.
 
-The claim of the project is that difficulty is indecision. A path bends exactly while the posterior is still spread over several training images that are far apart, and it is straight once the posterior has committed to one.
+The claim of the project is that difficulty is indecision. A path bends mainly while the posterior is still spread over several training images that are far apart, and it is straight once the posterior has committed to one (put almost all its weight on it). All results are for the linear path $x_t = t\,x_1 + (1 - t)\,\varepsilon$ used by flow matching.
 
 ## The approach, step by step
 
@@ -34,11 +34,14 @@ The claim of the project is that difficulty is indecision. A path bends exactly 
 
 **5. A sampler that uses this.** Every Euler step already produces a denoised prediction. The difference between two consecutive predictions estimates $\dot m$ to first order, at no extra network evaluations. The step size is then chosen so that every step commits the same local error: small steps where the path bends, large steps where it is straight, separately for each sample.
 
-**6. Experiments (in progress).** The theory is tested in three stages:
+## Results
 
-- the exact field on MNIST and Fashion-MNIST, to check the identities and bounds on real images;
-- a small U-Net and a small Diffusion Transformer trained with flow matching on the same data, to see where trained models follow the exact field and where they smooth it;
-- the curvature-adaptive sampler against a uniform grid at the same number of network evaluations.
+The write-up is [`documentation/paper.pdf`](documentation/paper.pdf), and the derivations are in [`documentation/handwritten_notes.pdf`](documentation/handwritten_notes.pdf). Experiments on MNIST, Fashion-MNIST and CIFAR-10 show:
+
+- The closed forms match automatic differentiation to a relative error below $10^{-12}$, and the bounds are never violated. The bound on `C` is within a factor of 11 to 19 in the median, but the bounds on `κ` and $\dot m$ are two to three orders of magnitude too loose.
+- The bending of the exact field peaks when the posterior commits on 17 of 24 trajectories. The others peak at the very start, driven by the covariance of the whole dataset.
+- A small U-Net and a small DiT follow the exact field until it commits and smooth afterwards; neither copies training images.
+- With tuned settings, the curvature-adaptive sampler lowers the Euler error at the same number of network evaluations by 11 to 30 % on Fashion-MNIST and CIFAR-10. On MNIST, a fixed schedule built from the average curvature is as good or better.
 
 ## Setup
 
@@ -57,6 +60,18 @@ Check the installation and run the tests:
 
 Python 3.12 is pinned in `.python-version`; uv installs it if it is missing.
 
+## Reproducing the results
+
+Each script writes a `summary.json` and figures to `results/`. The times are for one NVIDIA A100; MNIST runs of the first three also work on a CPU, more slowly. The trained networks are not in the repository: `train.py` writes them to `checkpoints/`, and the later scripts read them from there.
+
+| Command | What it does | Time |
+|---|---|---|
+| `uv run python experiments/train.py --dataset cifar10 --model dit` | trains one network | 25 to 75 min |
+| `uv run python experiments/exact_field.py --dataset cifar10` | identities, bounds and active set of the exact field | 4 to 5 min |
+| `uv run python experiments/trained_networks.py --dataset cifar10` | networks against the exact field | 2 to 4 min |
+| `uv run python experiments/schedule_baseline.py --dataset cifar10 --nfe 5 10 20 40 --num-samples 128 --seed 4 --h-max-grid 0.25 0.5 --out results/schedule_baseline_cifar10_n128` | sampler comparison | 20 to 25 min |
+| `uv run python experiments/sample_grids.py --dataset cifar10` | sample grids, after the comparison | 1 min |
+
 ## What is new and what is not
 
 Known and cited: the Jacobian identity (second-order Tweedie; Wan et al. 2024, Lv et al. 2026), the divergence identity (Lv et al. 2026), and the acceleration identity (Rao et al. 2026).
@@ -74,4 +89,4 @@ To the best of my knowledge new: the closed form for $\dot m$, the local active-
 
 ## Acknowledgement
 
-Claude (Anthropic) was used to check the derivations (and simplify some!), to search for related work.
+Claude (Anthropic) was used to verify the derivations (and simplify some!), to search for related work, and it introduced the notation `C` and `κ`; `m` is also the standard notation for the denoiser in the literature. Claude was also used to check the author-written Python code and to write all the tests and the testing scripts, which the author reviewed manually. The handwritten math derivations are available in the repository, and the LaTeX document was constructed from them.
