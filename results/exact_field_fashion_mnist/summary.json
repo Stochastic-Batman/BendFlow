@@ -1,0 +1,280 @@
+{
+  "args": {
+    "dataset": "fashion_mnist",
+    "num_traj": 8,
+    "steps": 100,
+    "bound_traj": 4,
+    "bound_every": 5,
+    "check_points": 5,
+    "div_points": 2,
+    "seed": 0,
+    "float32": false,
+    "out": null,
+    "replot": false
+  },
+  "math_config": {
+    "delta": 0.01,
+    "power_iters": 100
+  },
+  "n": 60000,
+  "d": 784,
+  "dtype": "float64",
+  "diameter_D": 44.912216352952065,
+  "identity_checks": [
+    {
+      "t": 0.03,
+      "jacobian_vs_autodiff": 8.563660443473955e-15,
+      "jacobian_vs_finite_diff": 2.12934677960175e-07,
+      "mdot_vs_autodiff": 1.4678283398561383e-14,
+      "mdot_vs_finite_diff": 1.3299628435003126e-09,
+      "divergence_vs_autodiff": 1.422396976413553e-16
+    },
+    {
+      "t": 0.12,
+      "jacobian_vs_autodiff": 2.970403296003629e-14,
+      "jacobian_vs_finite_diff": 7.96127496339901e-08,
+      "mdot_vs_autodiff": 1.9515460535638012e-13,
+      "mdot_vs_finite_diff": 1.803767135796917e-09,
+      "divergence_vs_autodiff": 0.0
+    },
+    {
+      "t": 0.22,
+      "jacobian_vs_autodiff": 1.0748283709092168e-14,
+      "jacobian_vs_finite_diff": 6.279632145598562e-08,
+      "mdot_vs_autodiff": 2.7647729262221416e-13,
+      "mdot_vs_finite_diff": 2.134252664213675e-09
+    },
+    {
+      "t": 0.27,
+      "jacobian_vs_autodiff": 1.0347608854777868e-14,
+      "jacobian_vs_finite_diff": 1.1330114002921564e-07,
+      "mdot_vs_autodiff": 1.491316379936816e-14,
+      "mdot_vs_finite_diff": 5.928209499789324e-09
+    },
+    {
+      "t": 0.13,
+      "jacobian_vs_autodiff": 1.9947670637207042e-16,
+      "jacobian_vs_finite_diff": 6.036846520702857e-08,
+      "mdot_vs_autodiff": 1.7774896755787046e-13,
+      "mdot_vs_finite_diff": 3.817898867738647e-09
+    }
+  ],
+  "identity_max_rel_err": {
+    "jacobian_vs_autodiff": 2.970403296003629e-14,
+    "jacobian_vs_finite_diff": 2.12934677960175e-07,
+    "mdot_vs_autodiff": 2.7647729262221416e-13,
+    "mdot_vs_finite_diff": 5.928209499789324e-09,
+    "divergence_vs_autodiff": 1.422396976413553e-16
+  },
+  "undecided_threshold_w_max": 0.99,
+  "lambda_max_max_rel_residual_undecided": 2.5122605146388018e-05,
+  "bound_points_undecided": 32,
+  "bound_points_total": 80,
+  "bound_over_actual_undecided": {
+    "lambda_max": {
+      "min": 4.699946052133065,
+      "median": 11.00972752594894,
+      "max": 81.20285953823557
+    },
+    "kappa": {
+      "min": 47.80643380745426,
+      "median": 288.59228269041705,
+      "max": 749.552241031021
+    },
+    "mdot": {
+      "min": 97.81510635073477,
+      "median": 540.6961018336757,
+      "max": 2035.6387453703198
+    }
+  },
+  "bound_violations": 0,
+  "per_trajectory": [
+    {
+      "t_peak_mdot": 0.27,
+      "peak_mdot": 100.02813329012082,
+      "n_eff_at_peak": 3.0978970646359114,
+      "w_max_at_peak": 0.5590510910066644,
+      "t_w_max_above_half": 0.27,
+      "final_nearest_index": 58424
+    },
+    {
+      "t_peak_mdot": 0.44,
+      "peak_mdot": 78.90993170585354,
+      "n_eff_at_peak": 2.0395932049836882,
+      "w_max_at_peak": 0.6869895759635214,
+      "t_w_max_above_half": 0.42,
+      "final_nearest_index": 2190
+    },
+    {
+      "t_peak_mdot": 0.08,
+      "peak_mdot": 165.25414704596403,
+      "n_eff_at_peak": 7721.360045720491,
+      "w_max_at_peak": 0.0026676022995381172,
+      "t_w_max_above_half": 0.25,
+      "final_nearest_index": 49466
+    },
+    {
+      "t_peak_mdot": 0.34,
+      "peak_mdot": 196.15843321745447,
+      "n_eff_at_peak": 1.6038082818923178,
+      "w_max_at_peak": 0.7854956748661582,
+      "t_w_max_above_half": 0.32,
+      "final_nearest_index": 35394
+    },
+    {
+      "t_peak_mdot": 0.02,
+      "peak_mdot": 98.08911522774937,
+      "n_eff_at_peak": 53902.16839603118,
+      "w_max_at_peak": 5.106394129282413e-05,
+      "t_w_max_above_half": 0.39,
+      "final_nearest_index": 51300
+    },
+    {
+      "t_peak_mdot": 0.08,
+      "peak_mdot": 105.93779146145825,
+      "n_eff_at_peak": 14495.316271770313,
+      "w_max_at_peak": 0.0010044055838998491,
+      "t_w_max_above_half": 0.27,
+      "final_nearest_index": 26074
+    },
+    {
+      "t_peak_mdot": 0.07,
+      "peak_mdot": 62.69158237137082,
+      "n_eff_at_peak": 31019.18963303833,
+      "w_max_at_peak": 0.00021352254395261717,
+      "t_w_max_above_half": 0.41000000000000003,
+      "final_nearest_index": 51460
+    },
+    {
+      "t_peak_mdot": 0.29,
+      "peak_mdot": 91.21906593346563,
+      "n_eff_at_peak": 6.0904657947553655,
+      "w_max_at_peak": 0.37365797043461746,
+      "t_w_max_above_half": 0.31,
+      "final_nearest_index": 37153
+    }
+  ],
+  "active_set_size_by_t": {
+    "0.00": [
+      60000.0,
+      60000.0,
+      60000.0,
+      60000.0
+    ],
+    "0.05": [
+      60000.0,
+      60000.0,
+      60000.0,
+      60000.0
+    ],
+    "0.10": [
+      60000.0,
+      60000.0,
+      59927.0,
+      59796.0
+    ],
+    "0.15": [
+      58690.0,
+      50503.0,
+      36607.0,
+      41069.0
+    ],
+    "0.20": [
+      29113.0,
+      26991.0,
+      7574.0,
+      21759.0
+    ],
+    "0.25": [
+      7221.0,
+      12162.0,
+      3220.0,
+      10731.0
+    ],
+    "0.30": [
+      1061.0,
+      4903.0,
+      694.0,
+      4221.0
+    ],
+    "0.35": [
+      78.0,
+      1802.0,
+      45.0,
+      952.0
+    ],
+    "0.40": [
+      4.0,
+      650.0,
+      1.0,
+      13.0
+    ],
+    "0.45": [
+      1.0,
+      207.0,
+      1.0,
+      1.0
+    ],
+    "0.50": [
+      1.0,
+      24.0,
+      1.0,
+      1.0
+    ],
+    "0.55": [
+      1.0,
+      4.0,
+      1.0,
+      1.0
+    ],
+    "0.60": [
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "0.65": [
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "0.70": [
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "0.75": [
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "0.80": [
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "0.85": [
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "0.90": [
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "0.95": [
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ]
+  },
+  "wall_time_s": 233.38649778801482
+}

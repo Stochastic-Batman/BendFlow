@@ -1,0 +1,175 @@
+{
+  "args": {
+    "dataset": "cifar10",
+    "fields": [
+      "exact",
+      "unet",
+      "dit"
+    ],
+    "nfe": [
+      10,
+      20,
+      40
+    ],
+    "num_samples": 32,
+    "ref_steps": 1000,
+    "bisect_iters": 20,
+    "batch": 8,
+    "seed": 1,
+    "checkpoints": "checkpoints",
+    "out": null,
+    "replot": false
+  },
+  "sampler_config": {
+    "h_min": 0.005,
+    "h_max": 0.25,
+    "h0": 0.05,
+    "max_steps": 256
+  },
+  "n": 50000,
+  "d": 3072,
+  "fields": {
+    "exact": {
+      "reference_self_error_median": 3.0116227171891336e-19,
+      "reference_self_error_max": 0.40998314125313107,
+      "rows": [
+        {
+          "target_nfe": 10,
+          "tol": 0.1390452161750096,
+          "uniform_mean_nfe": 10.0,
+          "bendflow_mean_nfe": 10.0,
+          "bendflow_nfe_min": 9,
+          "bendflow_nfe_max": 12,
+          "uniform_rms_err_median": 0.44257986704358243,
+          "bendflow_rms_err_median": 6.189018931283775e-18,
+          "uniform_rms_err_mean": 0.37119096536740914,
+          "bendflow_rms_err_mean": 0.1968696982012525,
+          "bendflow_better_fraction": 0.71875,
+          "uniform_same_image_as_reference": 0.21875,
+          "bendflow_same_image_as_reference": 0.59375
+        },
+        {
+          "target_nfe": 20,
+          "tol": 0.013310376203185427,
+          "uniform_mean_nfe": 20.0,
+          "bendflow_mean_nfe": 20.0,
+          "bendflow_nfe_min": 16,
+          "bendflow_nfe_max": 23,
+          "uniform_rms_err_median": 8.676011007268158e-17,
+          "bendflow_rms_err_median": 3.905756570896435e-18,
+          "uniform_rms_err_mean": 0.21452650590494304,
+          "bendflow_rms_err_mean": 0.13077293619906874,
+          "bendflow_better_fraction": 0.75,
+          "uniform_same_image_as_reference": 0.5625,
+          "bendflow_same_image_as_reference": 0.71875
+        },
+        {
+          "target_nfe": 40,
+          "tol": 0.001257649967526864,
+          "uniform_mean_nfe": 40.0,
+          "bendflow_mean_nfe": 40.0,
+          "bendflow_nfe_min": 24,
+          "bendflow_nfe_max": 55,
+          "uniform_rms_err_median": 1.0625699679178735e-16,
+          "bendflow_rms_err_median": 5.245740714681592e-18,
+          "uniform_rms_err_mean": 0.1385876713875094,
+          "bendflow_rms_err_mean": 0.11966154598953174,
+          "bendflow_better_fraction": 0.75,
+          "uniform_same_image_as_reference": 0.71875,
+          "bendflow_same_image_as_reference": 0.75
+        }
+      ]
+    },
+    "unet": {
+      "reference_self_error_median": 0.0020361644762744028,
+      "reference_self_error_max": 0.007429696513399759,
+      "rows": [
+        {
+          "target_nfe": 10,
+          "tol": 0.2663953371898188,
+          "uniform_mean_nfe": 10.0,
+          "bendflow_mean_nfe": 10.0,
+          "bendflow_nfe_min": 8,
+          "bendflow_nfe_max": 12,
+          "uniform_rms_err_median": 0.16484066359302357,
+          "bendflow_rms_err_median": 0.12152222223422872,
+          "uniform_rms_err_mean": 0.18249549072057747,
+          "bendflow_rms_err_mean": 0.13034498101456085,
+          "bendflow_better_fraction": 1.0
+        },
+        {
+          "target_nfe": 20,
+          "tol": 0.06949693882219132,
+          "uniform_mean_nfe": 20.0,
+          "bendflow_mean_nfe": 20.0,
+          "bendflow_nfe_min": 17,
+          "bendflow_nfe_max": 23,
+          "uniform_rms_err_median": 0.08768129715208808,
+          "bendflow_rms_err_median": 0.08021821157018996,
+          "uniform_rms_err_mean": 0.09951990984817632,
+          "bendflow_rms_err_mean": 0.0891399926795271,
+          "bendflow_better_fraction": 0.9375
+        },
+        {
+          "target_nfe": 40,
+          "tol": 0.01863827732042884,
+          "uniform_mean_nfe": 40.0,
+          "bendflow_mean_nfe": 40.0,
+          "bendflow_nfe_min": 34,
+          "bendflow_nfe_max": 46,
+          "uniform_rms_err_median": 0.04442417254199148,
+          "bendflow_rms_err_median": 0.057870675697271015,
+          "uniform_rms_err_mean": 0.051612226504068354,
+          "bendflow_rms_err_mean": 0.06699258502569089,
+          "bendflow_better_fraction": 0.03125
+        }
+      ]
+    },
+    "dit": {
+      "reference_self_error_median": 0.0021555737789630803,
+      "reference_self_error_max": 0.012189085262013273,
+      "rows": [
+        {
+          "target_nfe": 10,
+          "tol": 0.26465720143177235,
+          "uniform_mean_nfe": 10.0,
+          "bendflow_mean_nfe": 10.0,
+          "bendflow_nfe_min": 8,
+          "bendflow_nfe_max": 12,
+          "uniform_rms_err_median": 0.17063745530115337,
+          "bendflow_rms_err_median": 0.12622936486721426,
+          "uniform_rms_err_mean": 0.19126916642011652,
+          "bendflow_rms_err_mean": 0.1367212608489838,
+          "bendflow_better_fraction": 1.0
+        },
+        {
+          "target_nfe": 20,
+          "tol": 0.06837134967869778,
+          "uniform_mean_nfe": 20.0,
+          "bendflow_mean_nfe": 20.0,
+          "bendflow_nfe_min": 16,
+          "bendflow_nfe_max": 24,
+          "uniform_rms_err_median": 0.09180355190789675,
+          "bendflow_rms_err_median": 0.08667048219811566,
+          "uniform_rms_err_mean": 0.10607510656349016,
+          "bendflow_rms_err_mean": 0.09601893772076692,
+          "bendflow_better_fraction": 0.90625
+        },
+        {
+          "target_nfe": 40,
+          "tol": 0.018427430534110254,
+          "uniform_mean_nfe": 40.0,
+          "bendflow_mean_nfe": 40.0,
+          "bendflow_nfe_min": 33,
+          "bendflow_nfe_max": 47,
+          "uniform_rms_err_median": 0.04671150403495683,
+          "bendflow_rms_err_median": 0.06342451366609073,
+          "uniform_rms_err_mean": 0.05581985857338127,
+          "bendflow_rms_err_mean": 0.07470237240446666,
+          "bendflow_better_fraction": 0.0
+        }
+      ]
+    }
+  },
+  "wall_time_s": 513.6148209269741
+}
