@@ -1,5 +1,4 @@
 import argparse
-import dataclasses
 import json
 import time
 from pathlib import Path
@@ -13,14 +12,13 @@ import numpy as np
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from bendflow.config import load_math_config, load_networks_config
+from bendflow.config import load_math_config
 from bendflow.curvature import jacobian_top_eig, mdot_autodiff, mdot_closed_form
-from bendflow.data import image_shape, load_images
-from bendflow.fields import ExactField, NetworkField
-from bendflow.models import DiT, UNet
+from bendflow.data import load_images
+from bendflow.fields import ExactField
+from bendflow.networks import load_network
 from bendflow.posterior import EmpiricalPosterior
 from bendflow.samplers import UniformEuler
-from bendflow.train import load_model
 
 # A point counts as undecided while the largest posterior weight is below this (same as exact_field.py).
 UNDECIDED = 0.99
@@ -43,24 +41,6 @@ def parse_args():
     p.add_argument("--out", default=None, help="output directory")
     p.add_argument("--replot", action="store_true", help="only redraw the figures from the saved curves.npz")
     return p.parse_args()
-
-
-# A float32 network used as a field on float64 vectors.
-class CastField(eqx.Module):
-    field: NetworkField
-
-    def __call__(self, x, t):
-        return self.field(x.astype(jnp.float32), jnp.asarray(t, jnp.float32)).astype(x.dtype)
-
-
-def load_network(name: str, dataset: str, ckpt_dir: str):
-    cfg, shape = load_networks_config(), image_shape(dataset)
-    key = jax.random.key(0)
-    like = UNet(shape, key=key, **dataclasses.asdict(cfg.unet)) if name == "unet" else DiT(shape, key=key, **dataclasses.asdict(cfg.dit))
-    like = jax.tree.map(lambda a: a.astype(jnp.float32) if eqx.is_inexact_array(a) else a, like)
-    path = Path(ckpt_dir) / f"{dataset}_{name}.eqx"
-    meta = json.loads(path.with_suffix(".json").read_text())
-    return CastField(NetworkField(load_model(path, like), shape)), meta
 
 
 def run_trajectories(field, x0s, steps):

@@ -1,0 +1,163 @@
+import argparse
+import json
+import time
+from pathlib import Path
+
+import equinox as eqx
+import jax
+import jax.numpy as jnp
+import matplotlib
+import numpy as np
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+from bendflow.config import load_math_config
+from bendflow.data import load_images
+from bendflow.fields import ExactField
+from bendflow.networks import load_network
+from bendflow.posterior import EmpiricalPosterior
+from bendflow.samplers import BendFlowEuler, UniformEuler
+
+# Uniform Euler, BendFlow: categorical slots 1 and 2 of the validated palette.
+COLORS = {"uniform": "#2a78d6", "bendflow": "#eb6834"}
+LABELS = {"uniform": "uniform Euler", "bendflow": "BendFlow (Alg. 1)"}
+FIELD_LABELS = {"exact": "exact field", "unet": "U-Net", "dit": "DiT"}
+INK, GRID = "#52514e", "#e4e3df"
+
+
+def parse_args():
+    p = argparse.ArgumentParser(description="Curvature-adaptive against uniform Euler at matched NFE (paper, Section 7.3).")
+    p.add_argument("--dataset", default="mnist", choices=["mnist", "fashion_mnist", "cifar10"])
+    p.add_argument("--fields", nargs="+", default=["exact", "unet", "dit"], choices=["exact", "unet", "dit"])
+    p.add_argument("--nfe", nargs="+", type=int, default=[10, 20, 40], help="target numbers of field evaluations")
+    p.add_argument("--num-samples", type=int, default=32)
+    p.add_argument("--ref-steps", type=int, default=1000, help="uniform Euler steps of the reference solution")
+    p.add_argument("--bisect-iters", type=int, default=20, help="bisection steps on log10(tol) per target NFE")
+    p.add_argument("--batch", type=int, default=8, help="samples evaluated together (memory)")
+    p.add_argument("--seed", type=int, default=1, help="differs from the other experiments so the samples are fresh")
+    p.add_argument("--checkpoints", default="checkpoints")
+    p.add_argument("--out", default=None, help="output directory")
+    p.add_argument("--replot", action="store_true", help="only redraw the figure from the saved summary.json")
+    return p.parse_args()
+
+
+def rms(a, b):
+    return np.sqrt(np.mean((np.asarray(a) - np.asarray(b)) ** 2, axis=-1))
+
+
+def plot(path, summary, fields):
+    fig, axes = plt.subplots(1, len(fields), figsize=(3.6 * len(fields), 3.0), squeeze=False)
+    for ax, name in zip(axes[0], fields):
+        rows = summary["fields"][name]["rows"]
+        for s in ("uniform", "bendflow"):
+            ax.plot([r[f"{s}_mean_nfe"] for r in rows], [r[f"{s}_rms_err_median"] for r in rows], color=COLORS[s], lw=2, marker="o", ms=5, label=LABELS[s])
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.set_xlabel("mean NFE", color=INK)
+        ax.set_title(f"{FIELD_LABELS[name]}: RMS error to reference", color=INK, fontsize=10)
+        ax.grid(True, color=GRID, lw=0.6, which="both")
+        ax.set_axisbelow(True)
+        ax.tick_params(colors=INK, labelsize=8)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        for side in ("left", "bottom"):
+            ax.spines[side].set_color(GRID)
+    axes[0][0].legend(frameon=False, fontsize=9)
+    fig.tight_layout()
+    fig.savefig(path.with_suffix(".png"), dpi=200)
+    fig.savefig(path.with_suffix(".pdf"))
+    plt.close(fig)
+
+
+def main():
+    args = parse_args()
+    jax.config.update("jax_enable_x64", True)
+    out = Path(args.out or f"results/sampler_comparison_{args.dataset}")
+    out.mkdir(parents=True, exist_ok=True)
+    if args.replot:
+        summary = json.loads((out / "summary.json").read_text())
+        plot(out / "error_vs_nfe", summary, list(summary["fields"]))
+        print(f"figure redrawn in {out}/")
+        return
+
+    start = time.perf_counter()
+    cfg = load_math_config().sampler
+    raw = load_images(args.dataset)
+    data = jnp.asarray(raw, dtype=jnp.float64)
+    n, d = raw.shape
+    x0s = jax.random.normal(jax.random.key(args.seed), (args.num_samples, d), jnp.float64)
+    print(f"{args.dataset}: N={n} d={d} samples={args.num_samples} nfe={args.nfe} fields={args.fields} devices={jax.devices()}", flush=True)
+
+    def run(sampler, field):
+        f = eqx.filter_jit(lambda fld, x: sampler(fld, x))
+        res = jax.lax.map(lambda x: f(field, x), x0s, batch_size=args.batch)
+        return np.asarray(res.xs[:, -1]), np.asarray(res.nfe)
+
+    def nearest(samples):
+        return np.array([int(jnp.argmin(jnp.sum((data - s) ** 2, axis=1))) for s in samples])
+
+    summary = {"args": vars(args), "sampler_config": {"h_min": cfg.h_min, "h_max": cfg.h_max, "h0": cfg.h0, "max_steps": cfg.max_steps}, "n": n, "d": d, "fields": {}}
+    for name in args.fields:
+        field = ExactField(EmpiricalPosterior(data)) if name == "exact" else load_network(name, args.dataset, args.checkpoints)[0]
+        ref, _ = run(UniformEuler(args.ref_steps), field)
+        half, _ = run(UniformEuler(args.ref_steps // 2), field)
+        # Euler is first order, so ref - half estimates the error of ref itself.
+        ref_err = rms(ref, half)
+        ref_near = nearest(ref) if name == "exact" else None
+        print(f"{name}: reference done, its own error (vs half the steps) median {np.median(ref_err):.2e}, {time.perf_counter() - start:.0f}s", flush=True)
+
+        rows = []
+        for target in args.nfe:
+            uni, uni_nfe = run(UniformEuler(target), field)
+            # Smallest tol whose mean NFE is at most the target, by bisection on log10(tol).
+            lo, hi, best = -8.0, 3.0, None
+            for _ in range(args.bisect_iters):
+                mid = 0.5 * (lo + hi)
+                bf, bf_nfe = run(BendFlowEuler(10.0**mid, cfg.h_min, cfg.h_max, cfg.h0, cfg.max_steps), field)
+                if bf_nfe.mean() <= target:
+                    hi, best = mid, (mid, bf, bf_nfe)
+                else:
+                    lo = mid
+            if best is None:
+                print(f"{name} nfe {target}: no tol in [1e-8, 1e3] reaches mean NFE <= {target}", flush=True)
+                continue
+            log_tol, bf, bf_nfe = best
+            uni_err, bf_err = rms(uni, ref), rms(bf, ref)
+            row = {
+                "target_nfe": target,
+                "tol": 10.0**log_tol,
+                "uniform_mean_nfe": float(uni_nfe.mean()),
+                "bendflow_mean_nfe": float(bf_nfe.mean()),
+                "bendflow_nfe_min": int(bf_nfe.min()),
+                "bendflow_nfe_max": int(bf_nfe.max()),
+                "uniform_rms_err_median": float(np.median(uni_err)),
+                "bendflow_rms_err_median": float(np.median(bf_err)),
+                "uniform_rms_err_mean": float(uni_err.mean()),
+                "bendflow_rms_err_mean": float(bf_err.mean()),
+                "bendflow_better_fraction": float(np.mean(bf_err < uni_err)),
+            }
+            if ref_near is not None:
+                row["uniform_same_image_as_reference"] = float(np.mean(nearest(uni) == ref_near))
+                row["bendflow_same_image_as_reference"] = float(np.mean(nearest(bf) == ref_near))
+            rows.append(row)
+            print(f"{name} nfe {target}: {json.dumps(row)}, {time.perf_counter() - start:.0f}s", flush=True)
+        summary["fields"][name] = {"reference_self_error_median": float(np.median(ref_err)), "reference_self_error_max": float(ref_err.max()), "rows": rows}
+
+    summary["wall_time_s"] = time.perf_counter() - start
+    (out / "summary.json").write_text(json.dumps(summary, indent=2))
+    plot(out / "error_vs_nfe", summary, list(summary["fields"]))
+
+    print("--- summary ---")
+    for name, f in summary["fields"].items():
+        print(f"{name}: reference self-error median {f['reference_self_error_median']:.2e}, max {f['reference_self_error_max']:.2e}")
+        for r in f["rows"]:
+            same = f", same image as ref uniform {r['uniform_same_image_as_reference']:.2f} bendflow {r['bendflow_same_image_as_reference']:.2f}" if "uniform_same_image_as_reference" in r else ""
+            print(
+                f"  NFE {r['target_nfe']}: uniform err {r['uniform_rms_err_median']:.4f} | bendflow err {r['bendflow_rms_err_median']:.4f} (mean NFE {r['bendflow_mean_nfe']:.1f}, range {r['bendflow_nfe_min']}-{r['bendflow_nfe_max']}, tol {r['tol']:.2e}), bendflow better on {r['bendflow_better_fraction']:.2f}{same}"
+            )
+    print(f"wall time {summary['wall_time_s']:.0f}s, saved to {out}/")
+
+
+if __name__ == "__main__":
+    main()

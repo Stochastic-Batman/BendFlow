@@ -197,3 +197,21 @@ def test_metrics():
     assert int(i) == 1
     np.testing.assert_allclose(dist, 0.1, rtol=1e-6)
     np.testing.assert_allclose(endpoint_error(data[0], data[1]), jnp.sqrt(2.0), rtol=1e-6)
+
+
+# load_network rebuilds the model from the config, loads the weights and keeps float32 inside a float64 field.
+def test_load_network_roundtrip(tmp_path):
+    from bendflow.config import load_networks_config
+    from bendflow.data import image_shape
+    from bendflow.networks import build_model, load_network
+
+    shape = image_shape("mnist")
+    model, _ = build_model("unet", shape, load_networks_config(), jax.random.key(0))
+    model = jax.tree.map(lambda a: a.astype(jnp.float32) if eqx.is_inexact_array(a) else a, randomise(model, jax.random.key(3)))
+    save_model(tmp_path / "mnist_unet.eqx", model)
+    field, meta = load_network("unet", "mnist", str(tmp_path))
+    assert meta == {}
+    x = jax.random.normal(jax.random.key(4), (28 * 28,))
+    out = field(x, jnp.asarray(0.3))
+    assert out.dtype == x.dtype
+    np.testing.assert_allclose(out, model(x.reshape(shape).astype(jnp.float32), jnp.asarray(0.3, jnp.float32)).reshape(-1), rtol=1e-5, atol=1e-6)

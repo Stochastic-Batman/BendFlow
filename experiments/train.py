@@ -9,15 +9,8 @@ import jax
 
 from bendflow.config import load_networks_config
 from bendflow.data import image_shape, load_images
-from bendflow.models import DiT, UNet
+from bendflow.networks import build_model
 from bendflow.train import save_model, train
-
-
-# Returns the model and its training configuration.
-def build_model(name: str, shape, cfg, key):
-    if name == "unet":
-        return UNet(shape, key=key, **dataclasses.asdict(cfg.unet)), cfg.unet_train
-    return DiT(shape, key=key, **dataclasses.asdict(cfg.dit)), cfg.dit_train
 
 
 def main():
