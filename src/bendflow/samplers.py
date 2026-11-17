@@ -91,3 +91,22 @@ class BendFlowEuler(eqx.Module):
         xs = jnp.where((jnp.arange(n + 1) <= k)[:, None], xs, x)
         x1_hats = jnp.where((jnp.arange(n) < k)[:, None], x1_hats, x1)
         return Trajectory(xs, ts, x1_hats, k)
+
+
+# Euler on a fixed time grid ts = (0, t_1, ..., 1), the same for every sample. ts is an array, so one compiled
+# sampler serves every grid of the same length.
+class ScheduleEuler(eqx.Module):
+    ts: Array
+
+    def __call__(self, field, x0: Array) -> Trajectory:
+        ts = jnp.asarray(self.ts, x0.dtype)
+
+        def step(x, k):
+            t, h = ts[k], ts[k + 1] - ts[k]
+            v = field(x, t)
+            x_next = x + h * v
+            return x_next, (x_next, x + (1.0 - t) * v)
+
+        n = ts.shape[0] - 1
+        _, (xs, x1_hats) = jax.lax.scan(step, x0, jnp.arange(n))
+        return Trajectory(jnp.concatenate([x0[None], xs]), ts, x1_hats, jnp.asarray(n))

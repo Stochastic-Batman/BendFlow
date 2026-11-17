@@ -9,7 +9,7 @@ import pytest
 from bendflow.config import load_math_config
 from bendflow.curvature import mdot_closed_form
 from bendflow.fields import ExactField
-from bendflow.samplers import BendFlowEuler, UniformEuler
+from bendflow.samplers import BendFlowEuler, ScheduleEuler, UniformEuler
 
 D = 5
 
@@ -123,3 +123,30 @@ def test_mdot_estimator_is_first_order(posterior, field, x0):
     e1, e2, e3 = error(200), error(400), error(800)
     assert e3 < e2 < e1
     np.testing.assert_allclose(e2 / e3, 2.0, rtol=0.2)
+
+
+def test_schedule_euler_on_a_uniform_grid_matches_uniform_euler(field, x0):
+    a = UniformEuler(16)(field, x0)
+    b = ScheduleEuler(jnp.linspace(0.0, 1.0, 17))(field, x0)
+    np.testing.assert_allclose(b.xs, a.xs, rtol=1e-12)
+    np.testing.assert_allclose(b.x1_hats, a.x1_hats, rtol=1e-12)
+    assert int(b.nfe) == 16
+
+
+def test_schedule_euler_follows_its_grid(field, x0):
+    ts = jnp.array([0.0, 0.1, 0.15, 0.5, 0.9, 1.0])
+    traj = ScheduleEuler(ts)(field, x0)
+    x = x0
+    for k in range(5):
+        x = x + (ts[k + 1] - ts[k]) * field(x, ts[k])
+    np.testing.assert_allclose(traj.sample, x, rtol=1e-12)
+    np.testing.assert_allclose(traj.ts, ts, rtol=1e-12)
+
+
+# Sampler settings passed as arrays are traced, so a jitted run does not recompile when tol changes.
+def test_bendflow_accepts_array_settings(field, x0):
+    run = eqx.filter_jit(lambda s, x: s(field, x))
+    a = run(BendFlowEuler(jnp.asarray(1e-2), jnp.asarray(0.01), jnp.asarray(0.2), jnp.asarray(0.05), 128), x0)
+    b = BendFlowEuler(1e-2, 0.01, 0.2, 0.05, 128)(field, x0)
+    np.testing.assert_allclose(a.xs, b.xs, rtol=1e-12)
+    assert int(a.nfe) == int(b.nfe)
