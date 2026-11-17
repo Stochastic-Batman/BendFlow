@@ -43,6 +43,7 @@ def parse_args():
         default=2,
         help="points for the divergence check (d jvps each)",
     )
+    p.add_argument("--div-batch", type=int, default=8, help="jvps evaluated together in the divergence check (lower it if the GPU runs out of memory)")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--float32", action="store_true", help="single precision (default: double)")
     p.add_argument("--out", default=None, help="output directory")
@@ -55,7 +56,7 @@ def rel_err(a, b) -> float:
 
 
 # Relative errors of the closed forms against autodiff and central differences.
-def identity_checks(post, field, points, key, div_points):
+def identity_checks(post, field, points, key, div_points, div_batch):
     dtype = post.data.dtype
     h = float(jnp.finfo(dtype).eps) ** (1 / 3)
     d = post.data.shape[1]
@@ -82,7 +83,7 @@ def identity_checks(post, field, points, key, div_points):
         diag = jax.lax.map(
             lambda e: e @ jax.jvp(lambda y: field(y, t), (x,), (e,))[1],
             jnp.eye(d, dtype=dtype),
-            batch_size=8,
+            batch_size=div_batch,
         )
         return divergence_closed_form(post, x, t), jnp.sum(diag)
 
@@ -252,7 +253,7 @@ def main():
         raise SystemExit("no undecided trajectory point; increase --steps")
     chosen = jax.random.choice(k_pick, len(cand), (min(args.check_points, len(cand)),), replace=False)
     points = [(xs[j, k], traj.ts[j, k]) for j, k in cand[np.asarray(chosen)]]
-    checks = identity_checks(post, field, points, k_check, args.div_points)
+    checks = identity_checks(post, field, points, k_check, args.div_points, args.div_batch)
     print(f"identity checks done, {time.perf_counter() - start:.0f}s", flush=True)
 
     def ratio_stats(bound, actual):
