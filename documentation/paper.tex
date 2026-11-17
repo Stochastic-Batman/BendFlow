@@ -4,7 +4,7 @@
 % 5.5in x 9in text block, 10pt Times, ruled title) without neurips_*.sty.
 \usepackage[letterpaper,textwidth=5.5in,textheight=9in,top=1in,headheight=12pt,headsep=25pt,footskip=30pt]{geometry}
 \usepackage{times}
-\usepackage[numbers,sort&compress]{natbib}
+\usepackage[round]{natbib}
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{5.5pt}
 \renewcommand{\normalsize}{\fontsize{10pt}{11pt}\selectfont}
@@ -31,8 +31,11 @@
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage{hyperref}
+\hypersetup{hidelinks}
 \usepackage{url}
 \usepackage{booktabs}
+\usepackage{graphicx}
+\graphicspath{{../results/}}
 \usepackage{amsmath,amssymb,amsthm}
 \usepackage{mathtools}
 \usepackage{xcolor}
@@ -69,7 +72,7 @@
 \maketitle
 
 \begin{abstract}
-Flow matching samplers follow a velocity field from noise to data, and their discretisation error is governed by how much the trajectory bends. We study this bending for the exact marginal field of a finite training set under the linear path. The field is determined by the posterior over training images given the current noisy point, and we express the bending through the first three moments of that posterior: its mean $m$, covariance $C$ and third central moment $\kappa$. Building on the known identity $\ddot x = \dot m/(1 - t)$, we derive the closed form $\dot m = C\eps/(1 - t)^2 - t\kappa/(1 - t)^3$, where $\eps$ is the predicted noise. We then bound $\lmax(C)$ and $\|\kappa\|$ by the diameter of an active set of training images near the current point, which gives a local, data-dependent bound on the bending instead of a fixed range of timesteps. Finally we turn the result into a step-size rule for the Euler sampler that estimates $\dot m$ from consecutive denoised predictions at no extra network evaluations. \todo{one sentence on the experimental findings once the experiments are done.}
+The discretisation error of a flow matching sampler is governed by how much its trajectories bend. We study this bending for the exact marginal field of a finite training set under the linear path $x_t = t\,x_1 + (1 - t)\,\varepsilon$. Building on the known identity $\ddot x = \dot m/(1 - t)$, we derive the closed form $\dot m = C\eps/(1 - t)^2 - t\kappa/(1 - t)^3$, where $C$ and $\kappa$ are the covariance and third central moment of the posterior over training images and $\eps$ is the predicted noise. We bound both moments by the diameter of an active set of nearby training images, and turn the result into a step-size rule for the Euler sampler that costs no extra network evaluations. On MNIST, Fashion-MNIST and CIFAR-10, the bending peaks when the posterior commits to one image on most trajectories, and trained U-Nets and DiTs follow the exact field only until that point. With tuned settings, the step-size rule lowers the Euler error at matched cost by $11\%$ to $30\%$ on Fashion-MNIST and CIFAR-10; on MNIST a fixed schedule built from the same rule is as good or better.
 \end{abstract}
 
 \section{Introduction}
@@ -80,12 +83,11 @@ Instead of a result of the form "between timesteps $0.3$ and $0.4$ the field cha
 
 \paragraph{Contributions.}
 \begin{itemize}
-  \item We collect the known identities for the spatial Jacobian, the divergence and the trajectory acceleration of the flow matching field in one notation (Section~\ref{sec:known}).
-  \item We derive a closed form for the rate of change $\dot m$ of the denoised prediction along a trajectory in terms of the posterior covariance and third moment (Theorem~\ref{thm:mdot}). Earlier work does not give a closed form for the time derivative of the denoiser.
+  \item Starting from the known identities for the spatial Jacobian, the divergence and the trajectory acceleration, which we restate in one notation (Section~\ref{sec:known}), we derive a closed form for the rate of change $\dot m$ of the denoised prediction along a trajectory of the linear path in terms of the posterior covariance and third moment (Theorem~\ref{thm:mdot}). Earlier work does not give a closed form for the time derivative of the denoiser.
   \item We bound the bending by the diameter of an active set of training images (Theorem~\ref{thm:local}); the bound on the covariance cannot be improved.
   \item We derive a curvature-adaptive step size for the Euler sampler together with an estimator of $\dot m$ that costs no extra network evaluations (Section~\ref{sec:sampler}).
 \end{itemize}
-The first three items are statements about the exact field of a finite training set. Whether trained networks follow them is an empirical question, which Section~\ref{sec:experiments} addresses.
+The first two items are statements about the exact field of a finite training set. Whether trained networks follow them is an empirical question, which Section~\ref{sec:experiments} addresses.
 
 \section{Setup and notation}\label{sec:setup}
 
@@ -126,13 +128,13 @@ This is the second-order Tweedie formula \citep{efron2011tweedie,manor2024poster
 \[
   \mu = \frac{1}{1 - t}\Big(\frac{t\lambda}{(1 - t)^2} - 1\Big).
 \]
-As $\lambda \in [0,\lmax]$, the eigenvalues of $\nabla_xu_t$ lie in
+As $\lambda \in [0,\lmax]$ and $\mu$ increases with $\lambda$, the eigenvalues of $\nabla_xu_t$ lie in
 \begin{equation}\label{eq:eigrange}
   \Big[-\frac{1}{1 - t},\ \frac{1}{1 - t}\Big(\frac{t\,\lmax(C)}{(1 - t)^2} - 1\Big)\Big].
 \end{equation}
-If $\mu < 0$, trajectories contract in that direction, and when $C = 0$ everything is pulled onto one image at rate $\frac{1}{1 - t}$. If $\mu > 0$, trajectories separate. This only happens when $\lmax(C) > \frac{(1 - t)^2}{t}$, that is, while the sample is still "choosing" between images that are far apart.
+If $\mu < 0$, trajectories contract in that direction, and when $C = 0$ everything is pulled onto one image at rate $\frac{1}{1 - t}$. If $\mu > 0$, trajectories separate. This only happens when $\lmax(C) > \frac{(1 - t)^2}{t}$, that is, while the sample is still "choosing" between images that are far apart. Appendix~\ref{app:eig} proves these statements and makes the last one precise: trajectories can only separate while $1 - \max_iw_i > \frac{(1 - t)^2}{t\,D^2}$, where $D$ is the diameter of the training set.
 
-Since $C$ is symmetric, $\nabla_xu_t$ is symmetric, so locally the field only stretches or compresses along orthogonal axes (the eigenvectors of $C$) and never rotates.
+Since $C$ is symmetric, $\nabla_xu_t$ is symmetric, so locally the field only stretches or compresses along orthogonal axes (the eigenvectors of $C$) and never rotates. The eigenvalue map, the range \eqref{eq:eigrange} and this last statement are also shown in Appendix~\ref{app:eig}.
 
 \paragraph{Divergence.} From \citet{lv2026uncertainty} (Eq.~19 and Section~3) we get
 \begin{equation}\label{eq:lv}
@@ -159,13 +161,17 @@ The proof differentiates $u_t = \frac{m - x}{1 - t}$ and uses $\dot x = u$ and $
 \section{Closed form for \texorpdfstring{$\dot m$}{the rate of change of the denoiser}}\label{sec:mdot}
 
 \begin{theorem}\label{thm:mdot}
-Along any trajectory $\dot x = u_t(x)$ of the field \eqref{eq:u}, for $t \in (0,1)$,
+Along any trajectory $\dot x = u_t(x)$ of the field \eqref{eq:u} of the linear path $x_t = t\,x_1 + (1 - t)\,\varepsilon$, for $t \in (0,1)$,
 \begin{equation}\label{eq:mdot}
   \dot m = \frac{C\,\eps}{(1 - t)^2} - \frac{t\,\kappa}{(1 - t)^3},
   \qquad\text{and hence}\qquad
   \ddot x = \frac{C\,\eps}{(1 - t)^3} - \frac{t\,\kappa}{(1 - t)^4}.
 \end{equation}
 \end{theorem}
+
+The coefficients in \eqref{eq:mdot} come from the linear path through the weights \eqref{eq:w} and the field \eqref{eq:u}. A general path $x_t = \alpha_t x_1 + \sigma_t\varepsilon$ changes both, so the closed form does not carry over unchanged; we treat only the linear path.
+
+The vector $\eps = \frac{x - t\,m}{1 - t}$ in \eqref{eq:mdot} is the posterior mean of the noise, $\eps = \E[\varepsilon \mid x_t = x]$, because $x = t\,x_1 + (1 - t)\,\varepsilon$ and $m = \E[x_1 \mid x_t = x]$. By Tweedie's formula \citep{efron2011tweedie} it is also the scaled score: differentiating $p_t$ gives $\nabla_x\log p_t(x) = \frac{t\,m - x}{(1 - t)^2}$, so $\eps = -(1 - t)\,\nabla_x\log p_t(x)$.
 
 \begin{proof}[Proof sketch]
 Write $w_i = e^{g_i}/\sum_je^{g_j}$ with $g_i = -\|x - t\,\xn{i}\|^2/2r^2$. Since the training points are constant, $\dot m = \sum_i\dot w_i\,\xn{i}$, and differentiating $\log w_i$ in time gives the same softmax rule as for the spatial gradient, $\dot w_i = w_i(\dot g_i - \sum_jw_j\dot g_j)$. Subtracting $m$ times a zero sum yields
@@ -203,7 +209,7 @@ Geometrically, the active points are those almost as close to the rescaled point
 $$
   \|x/t - \xn{i}\|^2 \le \|x/t - \xn{i^\star}\|^2 + 2\Big(\frac{1 - t}{t}\Big)^2\log\frac N\delta .
 $$
-The allowed slack shrinks to zero as $t \to 1$. Two diameters are used in what follows,
+This follows by writing $g_i$ in terms of $x/t$ (Appendix~\ref{app:active}). The allowed slack shrinks to zero as $t \to 1$. Two diameters are used in what follows,
 \[
   D_A = \max_{i,j \in A}\|\xn{i} - \xn{j}\|\qquad\text{and}\qquad D = \max_{i,j}\|\xn{i} - \xn{j}\|.
 \]
@@ -253,7 +259,7 @@ For the exact field, $\widehat{\dot m}_k = \dot m(t_{k - 1}) + O(h_{k - 1})$.
 \end{proposition}
 The proof is in Appendix~\ref{app:est}. The estimate describes time $t_{k - 1}$ but is used to choose the step at $t_k$. Since $\dot m(t_k) = \dot m(t_{k - 1}) + O(h)$, this one-step lag costs another $O(h)$ and does not change the order. For a trained network the estimate additionally carries the network's own error $v_\theta - u$, which we can only measure empirically.
 
-\paragraph{Resulting sampler.} Algorithm~\ref{alg:bendflow} states the sampler. There is no previous prediction at $k = 0$, so $h_0$ is a fixed value. When the posterior has committed, $\dot m \to 0$ and the rule would give $h \to \infty$, so $h_{\max}$ and the remaining time prevent overshooting $t = 1$, while $h_{\min}$ prevents the sampler from stalling at a sharp bend. To compare against a uniform grid, we tune $\tol$ until the average step count equals that of the uniform grid. Each step costs one network evaluation, the same as plain Euler.
+\paragraph{Resulting sampler.} Algorithm~\ref{alg:bendflow} states the sampler. There is no previous prediction at $k = 0$, so $h_0$ is a fixed value. When the posterior has committed (one training image carries almost all the weight), $\dot m \to 0$ and the rule would give $h \to \infty$, so $h_{\max}$ and the remaining time prevent overshooting $t = 1$, while $h_{\min}$ prevents the sampler from stalling at a sharp bend. To compare against a uniform grid, we tune $\tol$ until the average step count equals that of the uniform grid. Each step costs one network evaluation, the same as plain Euler.
 
 \begin{algorithm}[t]
 \caption{Curvature-adaptive Euler sampler}\label{alg:bendflow}
@@ -276,38 +282,78 @@ The proof is in Appendix~\ref{app:est}. The estimate describes time $t_{k - 1}$ 
 
 \section{Experiments}\label{sec:experiments}
 
-\todo{This section describes the planned experiments. No experiment has been run yet; every number, figure and conclusion below is a placeholder.}
+All experiments use the training splits of MNIST and Fashion-MNIST ($N = 60{,}000$, $d = 784$) and CIFAR-10 ($N = 50{,}000$, $d = 3072$), scaled to $[-1, 1]$. Every number and figure below was produced by a script in \texttt{experiments/} of the repository, and the outputs are in \texttt{results/}. The main text shows CIFAR-10; the remaining figures and tables are in Appendix~\ref{app:figures}.
 
-\subsection{Exact field on image data}
-\textbf{Setup.} MNIST and Fashion-MNIST training sets as the data distribution, with the exact field \eqref{eq:u} evaluated as a softmax-weighted average over all training images. CIFAR-10 if time and compute allow.\\
-\textbf{Questions.} (i) Do \eqref{eq:jac}, \eqref{eq:div} and \eqref{eq:mdot} hold numerically against finite differences? (ii) How loose are the bounds \eqref{eq:lam}--\eqref{eq:local} along real trajectories, and how large is the active set over time? (iii) Does $\|\dot m\|$ peak when a trajectory chooses between nearby images?\\
-\todo{Figure: $\|\dot m\|$ and its bound along sample trajectories. Figure: active-set size and $D_A$ over $t$.}
+\subsection{Exact field on image data}\label{sec:exp-exact}
+\textbf{Setup.} The exact field \eqref{eq:u} is evaluated in double precision over all training images, along $8$ trajectories per dataset (uniform Euler, $100$ steps). A point is \emph{undecided} while the largest posterior weight is below $0.99$; afterwards $C$ and $\kappa$ are nearly $0$ and relative errors say nothing.\\
+\textbf{Questions.} (i) Do \eqref{eq:jac}, \eqref{eq:div} and \eqref{eq:mdot} hold numerically against finite differences? (ii) How loose are the bounds \eqref{eq:lam}-\eqref{eq:local} along real trajectories, and how large is the active set over time? (iii) Does $\|\dot m\|$ peak when a trajectory chooses between nearby images?
 
-\subsection{Trained models: U-Net and DiT}
-\textbf{Setup.} A small U-Net and a small Diffusion Transformer trained with conditional flow matching on the same data. The architectures and parameter counts are given in Appendices~\ref{app:unet} and~\ref{app:dit}. \todo{optimiser, training length.}\\
-\textbf{Questions.} (i) Where and when does the denoised prediction of each network deviate from the exact $m$, i.e.\ where does the network smooth the data instead of memorising it? (ii) Does $\|\widehat{\dot m}\|$ of the trained networks peak where the exact field predicts? (iii) Do the two architectures differ in this respect?\\
-\todo{Figure: top eigenvalue of $\nabla_xv_\theta$ against \eqref{eq:eigrange}. Figure: $\|\widehat{\dot m}_k\|$ for U-Net, DiT and the exact field.}
+\textbf{Identities.} At $5$ random undecided points per dataset, \eqref{eq:jac} and \eqref{eq:mdot} agree with automatic differentiation to a relative error below $10^{-12}$ and with central finite differences to below $10^{-6}$; the divergence \eqref{eq:div} agrees with the trace of the autodiff Jacobian to $3 \cdot 10^{-15}$ (Table~\ref{tab:identities} in Appendix~\ref{app:details}).
 
-\subsection{Curvature-adaptive sampling}
-\textbf{Setup.} Algorithm~\ref{alg:bendflow} against a uniform Euler grid at matched numbers of function evaluations (NFE), with $\tol$ tuned to match the average step count.\\
-\todo{Table~\ref{tab:sampler}. Sample grids at 5, 10 and 20 NFE. FID on CIFAR-10 if available.}
+\textbf{Bounds and active set.} With $\delta = 0.01$, on $4$ trajectories per dataset and every $0.05$ in $t$, no bound is violated at any of the $240$ points. At the undecided points (Table~\ref{tab:bounds}), the bound on $\lmax(C)$ is within a factor $11$ to $19$ in the median, while the bounds on $\|\kappa\|$ and $\|\dot m\|$ are two to three orders of magnitude too large and get looser as $d$ and $D$ grow. Late in the trajectory the bound on $\|\dot m\|$ is useless (Figure~\ref{fig:exact}): once the active set is a single image, $D_A = 0$ and only the $\delta$ terms remain, which grow like $(1 - t)^{-3}$. The active set contains every image at $t \le 0.05$ and shrinks to a single image by $t = 0.25$ to $0.35$ on CIFAR-10, and more slowly on MNIST and Fashion-MNIST (Appendix~\ref{app:figures}).
 
 \begin{table}[t]
-\caption{Placeholder for the sampler comparison. \todo{fill in.}}\label{tab:sampler}
+\caption{Bound over true value at the undecided points of $4$ trajectories per dataset: median, with minimum and maximum in brackets. $D$ is the diameter of the training set.}\label{tab:bounds}
 \centering
-\begin{tabular}{llccc}
+\begin{tabular}{lrrlll}
 \toprule
-Model & Sampler & NFE 5 & NFE 10 & NFE 20\\
+Dataset & $D$ & Points & $\lmax(C)$, \eqref{eq:lam} & $\|\kappa\|$, \eqref{eq:kap} & $\|\dot m\|$, \eqref{eq:local}\\
 \midrule
-Exact field & Uniform Euler & -- & -- & --\\
-Exact field & BendFlow & -- & -- & --\\
-U-Net & Uniform Euler & -- & -- & --\\
-U-Net & BendFlow & -- & -- & --\\
-DiT & Uniform Euler & -- & -- & --\\
-DiT & BendFlow & -- & -- & --\\
+MNIST & $33.8$ & $29$ & $14.5$ ($3.5$-$81$) & $180$ ($51$-$439$) & $350$ ($123$-$1113$)\\
+Fashion-MNIST & $44.9$ & $32$ & $11.0$ ($4.7$-$81$) & $289$ ($48$-$750$) & $541$ ($98$-$2036$)\\
+CIFAR-10 & $106.8$ & $19$ & $19.2$ ($5.5$-$36$) & $910$ ($86$-$2127$) & $1387$ ($280$-$5189$)\\
 \bottomrule
 \end{tabular}
 \end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{exact_field_cifar10/mdot_and_bound.pdf}
+\caption{Exact field on CIFAR-10: $\|\dot m\|$ from \eqref{eq:mdot} along four trajectories and the bound \eqref{eq:local}. The active set along the same trajectories is in Figure~\ref{fig:active-cifar}.}\label{fig:exact}
+\end{figure}
+
+\textbf{Where $\|\dot m\|$ peaks.} The time of the largest $\|\dot m\|$ is within $0.02$ of the first time at which one image carries more than half of the posterior weight, which we take as the time of commitment, on $7$ of $8$ trajectories on MNIST, $6$ of $8$ on CIFAR-10 and $4$ of $8$ on Fashion-MNIST. The other trajectories peak at $t \le 0.08$, while thousands of images still share the weight. This early peak is not a choice between images: at $t = 0$, \eqref{eq:mdot} reduces to $\dot m = C x$ with $C$ the covariance of the whole training set.
+
+\subsection{Trained models: U-Net and DiT}\label{sec:exp-networks}
+\textbf{Setup.} The U-Net and DiT of Appendices~\ref{app:unet} and~\ref{app:dit}, trained with conditional flow matching (Appendix~\ref{app:details}), each follow $8$ trajectories from the same noise as in Section~\ref{sec:exp-exact}. At every point we also evaluate the exact field at the same input. The top eigenvalue of the symmetric part of $\nabla_x v_\theta$ is computed by power iteration on $4$ trajectories.\\
+\textbf{Questions.} (i) Where and when does the denoised prediction of each network deviate from the exact $m$, i.e.\ where does the network smooth the data instead of memorising it? (ii) Does $\|\widehat{\dot m}\|$ of the trained networks peak where the exact field predicts? (iii) Do the two architectures differ in this respect?
+
+\textbf{Denoiser.} The median RMS of $\hat x_1 - m$ per pixel is at most $0.035$ at $t \le 0.1$ for all six networks, rises over the range in which the exact posterior commits, and reaches $0.23$ to $0.31$ at $t = 0.9$ (Figure~\ref{fig:networks} in Appendix~\ref{app:figures}). No network sample copies the image on which the exact field ends from the same noise: on MNIST that image is never even the nearest one, and where it is (3 of 8 samples per network on Fashion-MNIST, 2 of 8 on CIFAR-10) the RMS distance is $0.13$ to $0.56$. The networks follow the exact field until it commits and smooth afterwards.
+
+\textbf{Curvature.} The networks do not reproduce the sharp peak of the exact $\|\dot m\|$ (Figure~\ref{fig:mdot-networks}). At undecided points their $\|\dot m\|$ is a median $0.27$ to $0.80$ times the exact value at the same point, lowest on CIFAR-10. It is largest near $t = 0$ and decays to about $10$ at $t = 1$, while the exact value drops to $0$ after commitment; only on MNIST does the estimate \eqref{eq:est} still peak inside the commitment range ($t = 0.17$ to $0.33$). The estimate follows the autodiff value closely. The Jacobian tells the same story: before commitment the networks' top eigenvalue is close to the upper end of \eqref{eq:eigrange} for the exact field, but afterwards it stays at about $2$ to $14$, where the exact field contracts every direction (its upper end tends to $-1/(1 - t)$). It lies above the exact upper end at $26$ to $42$ of the $28$ to $44$ decided points per network.
+
+\textbf{Architectures.} The U-Net and the DiT behave almost identically in all three respects, although the DiT has four times as many parameters; the DiT is slightly closer to the exact $\|\dot m\|$.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{trained_networks_cifar10/mdot_networks.pdf}
+\caption{$\|\dot m\|$ on CIFAR-10 along four trajectories of each network: the exact field from \eqref{eq:mdot} along its own trajectory from the same noise, the network by automatic differentiation, and the network by the estimate \eqref{eq:est} used in Algorithm~\ref{alg:bendflow}.}\label{fig:mdot-networks}
+\end{figure}
+
+\subsection{Curvature-adaptive sampling}\label{sec:exp-sampler}
+\textbf{Setup.} We compare four Euler samplers at matched mean numbers of function evaluations (NFE) of $5$, $10$, $20$ and $40$, on $128$ fresh noise samples per dataset: uniform Euler; Algorithm~\ref{alg:bendflow} with the default settings $h_0 = 0.05$, $h_{\min} = 0.005$, $h_{\max} = 0.25$ ("config"); Algorithm~\ref{alg:bendflow} with $h_0$, $h_{\min}$ and $h_{\max}$ chosen from a small grid by the mean error on $32$ separate calibration samples ("tuned"); and a fixed schedule, one grid for all samples placed by the rule \eqref{eq:h} applied to the mean of \eqref{eq:est} over the calibration samples. For both BendFlow variants, $\tol$ is the smallest value whose mean NFE is at most the target. The fixed schedule separates placing the steps by curvature from adapting them to each sample. The error is the RMS per pixel to uniform Euler with $1000$ steps from the same noise; for the exact field, where a sample either ends on the reference's training image or on another one, we report how often it ends nearest to the same image. Appendix~\ref{app:details} gives the details.
+
+\begin{table}[t]
+\caption{Trained networks: change of the mean RMS error to the reference relative to uniform Euler at the same mean NFE, in percent, for tuned BendFlow / the fixed schedule ($128$ samples). The better of the two is in bold. Absolute errors of all four samplers are in Table~\ref{tab:sampler}.}\label{tab:sampler-summary}
+\centering
+\small
+\begin{tabular}{llcccc}
+\toprule
+Dataset & Network & NFE 5 & NFE 10 & NFE 20 & NFE 40\\
+\midrule
+MNIST & U-Net & $+3$ / $\mathbf{-7}$ & $-3$ / $\mathbf{-8}$ & $-9$ / $\mathbf{-10}$ & $-9$ / $\mathbf{-16}$\\
+MNIST & DiT & $+3$ / $\mathbf{-5}$ & $-3$ / $\mathbf{-6}$ & $\mathbf{-9}$ / $-6$ & $\mathbf{-15}$ / $-2$\\
+Fashion-MNIST & U-Net & $\mathbf{-25}$ / $-12$ & $\mathbf{-16}$ / $-8$ & $\mathbf{-13}$ / $-12$ & $\mathbf{-11}$ / $-9$\\
+Fashion-MNIST & DiT & $\mathbf{-25}$ / $-11$ & $\mathbf{-20}$ / $-12$ & $\mathbf{-18}$ / $-16$ & $\mathbf{-19}$ / $-16$\\
+CIFAR-10 & U-Net & $\mathbf{-29}$ / $-8$ & $\mathbf{-27}$ / $-12$ & $\mathbf{-19}$ / $-12$ & $\mathbf{-17}$ / $-13$\\
+CIFAR-10 & DiT & $\mathbf{-30}$ / $-8$ & $\mathbf{-28}$ / $-13$ & $\mathbf{-24}$ / $-14$ & $\mathbf{-21}$ / $-14$\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Trained networks.} On Fashion-MNIST and CIFAR-10, tuned BendFlow has the lowest error in all $16$ combinations of network and NFE, $11\%$ to $30\%$ below uniform Euler and $1\%$ to $24\%$ below the fixed schedule, with the largest gains at low NFE (Table~\ref{tab:sampler-summary}). With the default settings it can be worse than uniform Euler (CIFAR-10, NFE $40$); there the calibration chooses $h_0 = 0.01$ and $h_{\min} = 0.001$, which removes the loss. On MNIST the fixed schedule is best in $6$ of $8$ combinations, and tuned BendFlow is $3\%$ worse than uniform Euler at NFE $5$.
+
+\textbf{Exact field.} Here the fixed schedule ends on the reference's image as often as the best alternative or more often in all $12$ cases, most clearly at NFE $5$ (CIFAR-10: $38\%$, against $12\%$ for tuned BendFlow and $9\%$ for uniform Euler); at NFE $40$ tuned BendFlow catches up (Table~\ref{tab:sampler-exact}). A possible reason, which we have not tested, is that \eqref{eq:est} uses the previous step and so detects the short peak at commitment one step late. Plots of the error against NFE and sample grids are in Appendix~\ref{app:figures}.
 
 \section{Related work}\label{sec:related}
 
@@ -317,10 +363,10 @@ The connection between the Jacobian of the denoiser and the posterior covariance
 
 \section{Limitations and conclusion}\label{sec:conclusion}
 
-All statements are about the exact marginal field of a finite training set under the linear path. Sampling with that field reproduces training images, so it serves as a reference for memorisation and not as a generator. The bound \eqref{eq:local} is an upper bound and can be loose, in particular through the factor $\|\eps\|$ and the bound on $\kappa$. Proposition~\ref{prop:est} covers the exact field only, and the step-size rule controls the local error; we do not prove a bound on the global error. The novelty claims rest on a search of the closest literature and not on a proof that the results are absent elsewhere. \todo{conclusion once the experiments are done.}
+All statements are about the exact marginal field of a finite training set under the linear path. Sampling with that field reproduces training images, so it serves as a reference for memorisation and not as a generator. The bound \eqref{eq:local} is an upper bound and can be loose, in particular through the factor $\|\eps\|$ and the bound on $\kappa$. Proposition~\ref{prop:est} covers the exact field only, and the step-size rule controls the local error; we do not prove a bound on the global error. The novelty claims rest on a search of the closest literature and not on a proof that the results are absent elsewhere. The experiments confirm the identities; the bound on $\lmax(C)$ is within one to two orders of magnitude, but those on $\|\kappa\|$ and $\|\dot m\|$ are too loose to use quantitatively. The bend peaks at commitment on most, but not all, exact trajectories, and trained networks follow the exact field only until commitment. The step-size rule helps on trained networks, most at low NFE, but it needs tuned settings, and a fixed schedule built from the mean curvature profile captures much of the gain; on MNIST and the exact field it is as good or better. We measure the error to a fine-step reference rather than sample quality, with $128$ samples, one draw of noise and small networks.
 
 \section*{LLM Usage}
-Claude (Anthropic) was used to verify the derivations, to search for related work, and it introduced the notation $C$ and $\kappa$; $m$ is also the standard notation for the denoiser in the literature. Claude was also used to check the author-written Python code and to write all the tests, which the author reviewed manually. The handwritten math derivations are available in the repository, and this \LaTeX{} document was constructed from them.
+Claude (Anthropic) was used to verify the derivations, to search for related work, and it introduced the notation $C$ and $\kappa$; $m$ is also the standard notation for the denoiser in the literature. Claude was also used to check the author-written Python code and to write all the tests and the testing scripts, which the author reviewed manually. The handwritten math derivations are available in the repository, and this \LaTeX{} document was constructed from them.
 
 \begin{thebibliography}{99}
 
@@ -335,15 +381,15 @@ J.~Benton, G.~Deligiannidis, and A.~Doucet.
 \newblock \emph{Transactions on Machine Learning Research}, 2024.
 \newblock arXiv:2305.16860.
 
-\bibitem[CSFlow(2026)]{csflow}
-% TODO: complete authors and title from the arXiv page.
-CSFlow.
-\newblock arXiv:2606.08833, 2026.
-
 \bibitem[Efron(2011)]{efron2011tweedie}
 B.~Efron.
 \newblock Tweedie's formula and selection bias.
 \newblock \emph{Journal of the American Statistical Association}, 106(496):1602--1614, 2011.
+
+\bibitem[Galinska et~al.(2026)]{csflow}
+M.~Galinska, B.~Pogodzinski, and J.~E. Lenssen.
+\newblock {CSFlow}: Aligning flow matching with human contrast sensitivity.
+\newblock arXiv:2606.08833, 2026.
 
 \bibitem[Gao et~al.(2024)]{gao2024convergence}
 Y.~Gao, J.~Huang, Y.~Jiao, and S.~Zheng.
@@ -364,6 +410,11 @@ J.~Ho, A.~Jain, and P.~Abbeel.
 Y.~Lipman, R.~T.~Q. Chen, H.~Ben-Hamu, M.~Nickel, and M.~Le.
 \newblock Flow matching for generative modeling.
 \newblock In \emph{International Conference on Learning Representations}, 2023.
+
+\bibitem[Loshchilov and Hutter(2019)]{loshchilov2019adamw}
+I.~Loshchilov and F.~Hutter.
+\newblock Decoupled weight decay regularization.
+\newblock In \emph{International Conference on Learning Representations}, 2019.
 
 \bibitem[Lv et~al.(2026)]{lv2026uncertainty}
 L.~Lv, J.~Xing, X.~Liang, and J.~Wang.
@@ -400,11 +451,6 @@ O.~Ronneberger, P.~Fischer, and T.~Brox.
 \newblock U-Net: Convolutional networks for biomedical image segmentation.
 \newblock In \emph{Medical Image Computing and Computer-Assisted Intervention}, 2015.
 
-\bibitem[Stable Velocity(2026)]{stablevelocity}
-% TODO: complete authors and title from the arXiv page.
-Stable Velocity.
-\newblock arXiv:2602.05435, 2026.
-
 \bibitem[Su et~al.(2021)]{su2021roformer}
 J.~Su, Y.~Lu, S.~Pan, A.~Murtadha, B.~Wen, and Y.~Liu.
 \newblock RoFormer: Enhanced transformer with rotary position embedding.
@@ -424,6 +470,11 @@ Z.~Wan, Q.~Wang, G.~Mishne, and Y.~Wang.
 Y.~Wu and K.~He.
 \newblock Group normalization.
 \newblock In \emph{European Conference on Computer Vision}, 2018.
+
+\bibitem[Yang et~al.(2026)]{stablevelocity}
+D.~Yang, Y.~Zhang, X.~Yu, L.~Hou, X.~Tao, P.~Wan, X.~Qi, and R.~Liao.
+\newblock Stable velocity: A variance perspective on flow matching.
+\newblock arXiv:2602.05435, 2026.
 
 \end{thebibliography}
 
@@ -492,6 +543,47 @@ Therefore $\sum_iw_i\,m\,(\xn{i} - m)^\top = 0$, and subtracting this zero matri
 \]
 With $\nabla_xu_t = \frac{1}{1 - t}\nabla_xm - \frac{1}{1 - t}I$ this gives \eqref{eq:jac}. \qed
 
+\section{Eigenvalues of the Jacobian}\label{app:eig}
+
+This appendix proves the statements that follow \eqref{eq:eigrange}.
+
+\paragraph{Eigenvalues.} By Appendix~\ref{app:psd}, $C$ is symmetric and positive semi-definite, so $C = \sum_k\lambda_kq_kq_k^\top$ with orthonormal eigenvectors $q_k$ and eigenvalues $\lambda_k \in [0,\lmax(C)]$. By \eqref{eq:jac},
+$$
+  \nabla_xu_t\,q_k = \frac{1}{1 - t}\Big(\frac{t}{(1 - t)^2}\,C\,q_k - q_k\Big) = \frac{1}{1 - t}\Big(\frac{t\lambda_k}{(1 - t)^2} - 1\Big)q_k = \mu_k\,q_k ,
+$$
+so $\nabla_xu_t$ has the eigenvectors of $C$ and the eigenvalues $\mu_k$. For $t \in (0,1)$ the map $\lambda \mapsto \mu$ is increasing, so every $\mu_k$ lies between its values at $\lambda = 0$ and $\lambda = \lmax(C)$, which is \eqref{eq:eigrange}. $\nabla_xu_t$ is symmetric, since it is a linear combination of $C$ and $I$.
+
+\paragraph{Contraction and separation.} Let $x(t)$ and $y(t)$ be two trajectories and $\Delta = y - x$ their separation. With $J = \nabla_xu_t(x)$, Taylor's theorem gives $\dot\Delta = u_t(y) - u_t(x) = J\Delta + O(\|\Delta\|^2)$. Hence
+$$
+  \frac{d}{dt}\,\frac12\|\Delta\|^2 = \Delta^\top J\Delta + O(\|\Delta\|^3),\qquad
+  \mu_{\min}\|\Delta\|^2 \le \Delta^\top J\Delta \le \mu_{\max}\|\Delta\|^2 ,
+$$
+where the second statement holds because $J$ is symmetric. For a fixed eigenvector $q_k$ of $J$ at time $t$, symmetry gives $q_k^\top J = \mu_kq_k^\top$, so
+$$
+  \frac{d}{dt}\,(q_k \cdot \Delta) = \mu_k\,(q_k \cdot \Delta) + O(\|\Delta\|^2).
+$$
+To first order in $\Delta$, the component of the separation along $q_k$ therefore grows at relative rate $\mu_k$ if $\mu_k > 0$ and shrinks at relative rate $|\mu_k|$ if $\mu_k < 0$. If all $\mu_k < 0$, nearby trajectories approach each other in every direction.
+
+\paragraph{Collapse onto one image.} For $t < 1$ every weight $w_i$ is positive, so $C = 0$ holds exactly only if all training images coincide. The statement "$C = 0$" describes the limit in which one image $\xn{i^\star}$ carries all the weight. In that limit $m = \xn{i^\star}$, $C = 0$ and $\kappa = 0$, so $\dot m = 0$ by \eqref{eq:mdot}, the Jacobian is $J = -\frac{1}{1 - t}I$, and the field is $u_t(x) = \frac{\xn{i^\star} - x}{1 - t}$. Its trajectories are
+$$
+  x(t) - \xn{i^\star} = \frac{1 - t}{1 - t_0}\,\big(x(t_0) - \xn{i^\star}\big),
+$$
+as differentiating both sides shows: the left side has derivative $u_t(x(t))$, and the right side has derivative $-\frac{1}{1 - t_0}\big(x(t_0) - \xn{i^\star}\big) = -\frac{x(t) - \xn{i^\star}}{1 - t}$. Every trajectory therefore moves on a straight line to $\xn{i^\star}$ and reaches it at $t = 1$. The distance between two trajectories is multiplied by $\frac{1 - t}{1 - t_0}$, which is the relative rate $\frac{1}{1 - t}$.
+
+\paragraph{When trajectories separate.} For $t \in (0,1)$,
+$$
+  \mu > 0 \iff \frac{t\lambda}{(1 - t)^2} > 1 \iff \lambda > \frac{(1 - t)^2}{t},
+$$
+so some direction separates if and only if $\lmax(C) > \frac{(1 - t)^2}{t}$. Two upper bounds on $\lmax(C)$ show what this requires. First, as in the proof of \eqref{eq:lam} in Appendix~\ref{app:bounds}, a weighted variance is at most the weighted mean squared deviation from any point; with the point $\xn{i^\star}$ of largest weight and a unit vector $v$,
+$$
+  v^\top Cv \le \sum_iw_i\big(v \cdot (\xn{i} - \xn{i^\star})\big)^2 \le \sum_{i \ne i^\star}w_i\,D^2 = (1 - w_{i^\star})\,D^2 .
+$$
+Second, \eqref{eq:lam} gives $\lmax(C) \le \frac{D_A^2}{4} + \delta D^2$. Separation in some direction therefore requires both
+$$
+  1 - w_{i^\star} > \frac{(1 - t)^2}{t\,D^2}\qquad\text{and}\qquad \frac{D_A^2}{4} + \delta D^2 > \frac{(1 - t)^2}{t}.
+$$
+The first condition says that the largest weight is bounded away from $1$, so the posterior has not yet settled on one image. The second says, for small $\delta$, that the active images are spread over a distance of more than about $\frac{2(1 - t)}{\sqrt t}$. Together they are the precise form of "choosing between images that are far apart".
+
 \section{Proof of Theorem~\ref{thm:mdot}}\label{app:mdot}
 
 Fix a trajectory $x = x_t$ with $\dot x = u_t(x)$ and write a dot for the total derivative $\frac{d}{dt}$ along it. As before, $w_i = e^{g_i}/\sum_je^{g_j}$ and $g_i = -\frac{\|x - t\,\xn{i}\|^2}{2r^2}$ with $r = 1 - t$. Since the training points are constant, $\dot m = \sum_i\dot w_i\,\xn{i}$, and differentiating $\log w_i = g_i - \log\sum_je^{g_j}$ in time gives the same softmax rule as for the spatial gradient,
@@ -542,6 +634,22 @@ Finally, since $r\,u = m - x$, we have $t\,r\,u = t\,m - t\,x$, and
   b - \frac{2t\,m}{r^3} = \frac{(1 + t)\,x + t\,m - t\,x - 2t\,m}{r^3} = \frac{x - t\,m}{r^3} = \frac{r\,\eps}{r^3} = \frac{\eps}{r^2},
 \]
 which gives $\dot m = \frac{C\eps}{(1 - t)^2} - \frac{t\kappa}{(1 - t)^3}$, and with $\ddot x = \frac{\dot m}{1 - t}$ the second formula in \eqref{eq:mdot}. \qed
+
+\section{Geometric form of the active set}\label{app:active}
+
+For $t \in (0,1)$ we can write
+$$
+  g_i = -\frac{\|x - t\,\xn{i}\|^2}{2(1 - t)^2} = -\frac{t^2\,\|x/t - \xn{i}\|^2}{2(1 - t)^2}.
+$$
+So the largest $g_i$ belongs to the training image nearest to $x/t$, which is $\xn{i^\star}$. The condition $g_i \ge g_{i^\star} - \log\frac N\delta$ in \eqref{eq:active} reads
+$$
+  -\frac{t^2\,\|x/t - \xn{i}\|^2}{2(1 - t)^2} \ge -\frac{t^2\,\|x/t - \xn{i^\star}\|^2}{2(1 - t)^2} - \log\frac N\delta .
+$$
+Multiplying by the negative number $-\frac{2(1 - t)^2}{t^2}$ reverses the inequality and gives
+$$
+  \|x/t - \xn{i}\|^2 \le \|x/t - \xn{i^\star}\|^2 + 2\Big(\frac{1 - t}{t}\Big)^2\log\frac N\delta .
+$$
+Every step is an equivalence, so $i \in A$ if and only if this holds. The slack $2\big(\frac{1 - t}{t}\big)^2\log\frac N\delta$ tends to $0$ as $t \to 1$ and to infinity as $t \to 0$, where every image is active.
 
 \section{Proofs of the local bounds}\label{app:bounds}
 
@@ -762,6 +870,173 @@ Time embedding width $d_e$ & $192$\\
 
 \section{Additional experimental details}\label{app:details}
 
-\todo{Hyperparameters, compute, and the numerical checks of \eqref{eq:jac}, \eqref{eq:div}, \eqref{eq:mdot} and Theorem~\ref{thm:local} against finite differences.}
+\paragraph{Training.} Each of the six networks (U-Net and DiT on MNIST, Fashion-MNIST and CIFAR-10) is trained separately on the training split of its dataset with the conditional flow matching loss
+$$
+  \mathcal L(\theta) = \E_{t \sim \mathcal U[0, 1],\ \varepsilon \sim \mathcal N(0, I),\ x_1}\,\frac1d\,\big\|v_\theta\big(t\,x_1 + (1 - t)\,\varepsilon,\ t\big) - (x_1 - \varepsilon)\big\|^2 .
+$$
+Its minimiser is the exact field \eqref{eq:u}, but its minimum is not $0$, because the target $x_1 - \varepsilon$ is random given the noisy input. A random $5\%$ of the training split is held out for validation. Both networks use the same settings: AdamW \citep{loshchilov2019adamw} with weight decay $0$, batch size $128$, peak learning rate $2 \cdot 10^{-4}$ reached by a linear warm-up over $500$ steps and followed by a cosine decay to $0$ over $400$ epochs, gradient clipping at global norm $1$, and an exponential moving average (EMA) of the weights with decay $0.999$. After every epoch the EMA weights are evaluated on the validation split with a fixed draw of $t$ and $\varepsilon$, so the validation losses of different epochs are comparable. Training stops when the validation loss has not improved for $5$ epochs, and the EMA weights of the best epoch are kept. All six runs stopped this way, long before the limit of $400$ epochs (Table~\ref{tab:training}). Each run used one NVIDIA A100 (40\,GB) with JAX \texttt{0.12.0.1}; the six runs and their per-epoch losses are in \texttt{results/training} of the repository.
+
+\begin{table}[h]
+\caption{Training runs. The training loss is the average over the best epoch with the current weights; the validation loss uses the EMA weights on the held-out $5\%$. Time is the wall time of the run in minutes.}\label{tab:training}
+\centering
+\begin{tabular}{llrrrccr}
+\toprule
+Dataset & Network & Parameters & Epochs & Best & Train loss & Val.\ loss & Time\\
+\midrule
+MNIST & U-Net & $1{,}074{,}529$ & 153 & 148 & $0.1635$ & $0.1613$ & $25$\\
+MNIST & DiT & $4{,}148{,}548$ & 168 & 163 & $0.1633$ & $0.1607$ & $52$\\
+Fashion-MNIST & U-Net & $1{,}074{,}529$ & 197 & 192 & $0.2130$ & $0.2131$ & $33$\\
+Fashion-MNIST & DiT & $4{,}148{,}548$ & 183 & 178 & $0.2102$ & $0.2094$ & $58$\\
+CIFAR-10 & U-Net & $1{,}075{,}683$ & 276 & 271 & $0.1798$ & $0.1810$ & $45$\\
+CIFAR-10 & DiT & $4{,}151{,}628$ & 237 & 232 & $0.1762$ & $0.1765$ & $75$\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Sampler comparison.} The evaluation noise ($128$ samples), the calibration noise ($32$ samples) and the noise of the sample grids are three separate draws, none of them used elsewhere. For both BendFlow variants, $\tol$ is found by $14$ bisection steps on $\log_{10}\tol \in [-8, 3]$ as the smallest value whose mean NFE over the evaluation samples is at most the target; the NFE of individual samples varies around it (for example $26$ to $62$ at a target of $40$). The tuned variant chooses $h_0$ from $\{0.01, 0.05, 0.1\}$, $h_{\min}$ from $\{0.001, 0.005, 0.02\}$ and $h_{\max}$ from $\{0.25, 0.5\}$, separately for each field and target NFE; on the calibration samples $\tol$ is matched to the NFE in the same way, and only $\tol$ is matched again on the evaluation samples. With $h_{\max} = 0.25$, Algorithm~\ref{alg:bendflow} needs at least $5$ steps, so at NFE $5$ the config variant has no room to adapt. The fixed schedule measures the mean of \eqref{eq:est} over the calibration samples on a uniform grid of $200$ steps and places NFE steps with $h \propto \sqrt{(1 - t)/\overline{\|\widehat{\dot m}\|}(t)}$. To check the references, each is compared with uniform Euler with $500$ steps: for the networks the median difference is at most $2.2 \cdot 10^{-3}$, but for a few exact CIFAR-10 references the two runs end on different images (largest difference $0.54$), so those references are unreliable.
+
+\paragraph{Numerical checks of the identities.} Table~\ref{tab:identities} gives the largest relative error $\|a - b\| / \|b\|$ of the closed forms against automatic differentiation and against central finite differences with step $\epsilon^{1/3} \approx 6 \cdot 10^{-6}$, where $\epsilon$ is the machine precision of double precision. The Jacobian is checked along one random unit direction per point. The checks use $5$ random undecided points per dataset, and the divergence, which needs $d$ Jacobian-vector products, uses $2$ of them.
+
+\begin{table}[h]
+\caption{Largest relative error of the closed forms over the checked points.}\label{tab:identities}
+\centering
+\begin{tabular}{lccccc}
+\toprule
+ & \multicolumn{2}{c}{Jacobian \eqref{eq:jac}} & \multicolumn{2}{c}{$\dot m$, \eqref{eq:mdot}} & Divergence \eqref{eq:div}\\
+Dataset & autodiff & finite diff. & autodiff & finite diff. & autodiff\\
+\midrule
+MNIST & $6.2 \cdot 10^{-14}$ & $5.0 \cdot 10^{-7}$ & $6.2 \cdot 10^{-13}$ & $6.9 \cdot 10^{-9}$ & $6.4 \cdot 10^{-16}$\\
+Fashion-MNIST & $3.0 \cdot 10^{-14}$ & $2.1 \cdot 10^{-7}$ & $2.8 \cdot 10^{-13}$ & $5.9 \cdot 10^{-9}$ & $1.4 \cdot 10^{-16}$\\
+CIFAR-10 & $1.4 \cdot 10^{-14}$ & $4.0 \cdot 10^{-7}$ & $4.8 \cdot 10^{-13}$ & $6.3 \cdot 10^{-8}$ & $2.5 \cdot 10^{-15}$\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Power iteration.} The largest relative residual $\|C q - \lambda q\| / |\lambda|$ of the power iteration for $\lmax(C)$ at the undecided points is $1.1 \cdot 10^{-4}$ on MNIST, $2.5 \cdot 10^{-5}$ on Fashion-MNIST and $3.4 \cdot 10^{-3}$ on CIFAR-10. For the top eigenvalue of the network Jacobians it is between $1.1 \cdot 10^{-2}$ and $6.3 \cdot 10^{-2}$.
+
+\section{Additional results}\label{app:figures}
+
+The remaining CIFAR-10 figures and the full sampler tables of Section~\ref{sec:experiments}, followed by the figures of Sections~\ref{sec:exp-exact}, \ref{sec:exp-networks} and~\ref{sec:exp-sampler} for MNIST and Fashion-MNIST.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.75\linewidth]{exact_field_cifar10/active_set.pdf}
+\caption{Exact field on CIFAR-10: size of the active set \eqref{eq:active} and its diameter $D_A$ along the trajectories of Figure~\ref{fig:exact}.}\label{fig:active-cifar}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.36\linewidth]{trained_networks_cifar10/denoiser_error.pdf}\hfill
+\includegraphics[width=0.62\linewidth]{trained_networks_cifar10/jacobian_top_eig.pdf}
+\caption{Trained networks on CIFAR-10. Left: RMS per pixel of the difference between the network's denoised prediction $\hat x_1$ and the exact $m$ at the same point, median over $8$ trajectories. Right: top eigenvalue of the symmetric part of the network Jacobian and the upper end of \eqref{eq:eigrange} for the exact field at the same point, on $4$ trajectories (symmetric logarithmic axis).}\label{fig:networks}
+\end{figure}
+
+\begin{table}[p]
+\caption{Trained networks: mean RMS error per pixel to the $1000$-step reference over $128$ samples, at matched mean NFE. The lowest value in each column of each block is in bold.}\label{tab:sampler}
+\centering
+\small
+\begin{tabular}{lllcccc}
+\toprule
+Dataset & Network & Sampler & NFE 5 & NFE 10 & NFE 20 & NFE 40\\
+\midrule
+MNIST & U-Net & Uniform Euler & $0.228$ & $0.147$ & $0.085$ & $0.050$\\
+ &  & BendFlow, config & $0.260$ & $0.145$ & $0.078$ & $0.047$\\
+ &  & BendFlow, tuned & $0.234$ & $0.143$ & $0.078$ & $0.046$\\
+ &  & Fixed schedule & $\mathbf{0.212}$ & $\mathbf{0.135}$ & $\mathbf{0.077}$ & $\mathbf{0.042}$\\
+\addlinespace
+MNIST & DiT & Uniform Euler & $0.238$ & $0.146$ & $0.088$ & $0.043$\\
+ &  & BendFlow, config & $0.269$ & $0.143$ & $\mathbf{0.081}$ & $0.043$\\
+ &  & BendFlow, tuned & $0.246$ & $0.141$ & $\mathbf{0.081}$ & $\mathbf{0.036}$\\
+ &  & Fixed schedule & $\mathbf{0.226}$ & $\mathbf{0.137}$ & $0.082$ & $0.042$\\
+\addlinespace
+Fashion-MNIST & U-Net & Uniform Euler & $0.290$ & $0.159$ & $0.092$ & $0.049$\\
+ &  & BendFlow, config & $0.286$ & $\mathbf{0.134}$ & $\mathbf{0.080}$ & $0.048$\\
+ &  & BendFlow, tuned & $\mathbf{0.218}$ & $\mathbf{0.134}$ & $\mathbf{0.080}$ & $\mathbf{0.043}$\\
+ &  & Fixed schedule & $0.256$ & $0.146$ & $0.081$ & $0.044$\\
+\addlinespace
+Fashion-MNIST & DiT & Uniform Euler & $0.309$ & $0.177$ & $0.096$ & $0.051$\\
+ &  & BendFlow, config & $0.298$ & $\mathbf{0.142}$ & $\mathbf{0.079}$ & $0.051$\\
+ &  & BendFlow, tuned & $\mathbf{0.232}$ & $\mathbf{0.142}$ & $\mathbf{0.079}$ & $\mathbf{0.041}$\\
+ &  & Fixed schedule & $0.274$ & $0.156$ & $0.081$ & $0.043$\\
+\addlinespace
+CIFAR-10 & U-Net & Uniform Euler & $0.282$ & $0.172$ & $0.093$ & $0.048$\\
+ &  & BendFlow, config & $0.232$ & $\mathbf{0.125}$ & $0.085$ & $0.064$\\
+ &  & BendFlow, tuned & $\mathbf{0.201}$ & $\mathbf{0.125}$ & $\mathbf{0.075}$ & $\mathbf{0.040}$\\
+ &  & Fixed schedule & $0.260$ & $0.151$ & $0.082$ & $0.042$\\
+\addlinespace
+CIFAR-10 & DiT & Uniform Euler & $0.290$ & $0.178$ & $0.097$ & $0.050$\\
+ &  & BendFlow, config & $0.235$ & $\mathbf{0.128}$ & $0.089$ & $0.068$\\
+ &  & BendFlow, tuned & $\mathbf{0.203}$ & $\mathbf{0.128}$ & $\mathbf{0.074}$ & $\mathbf{0.040}$\\
+ &  & Fixed schedule & $0.267$ & $0.155$ & $0.083$ & $0.043$\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\caption{Exact field: fraction of the $128$ samples that end nearest to the same training image as the $1000$-step reference, at matched mean NFE. The highest value in each column of each block is in bold.}\label{tab:sampler-exact}
+\centering
+\small
+\begin{tabular}{llcccc}
+\toprule
+Dataset & Sampler & NFE 5 & NFE 10 & NFE 20 & NFE 40\\
+\midrule
+MNIST & Uniform Euler & $0.34$ & $0.64$ & $0.79$ & $0.90$\\
+ & BendFlow, config & $0.27$ & $0.72$ & $\mathbf{0.91}$ & $\mathbf{0.95}$\\
+ & BendFlow, tuned & $0.27$ & $0.74$ & $\mathbf{0.91}$ & $\mathbf{0.95}$\\
+ & Fixed schedule & $\mathbf{0.59}$ & $\mathbf{0.79}$ & $\mathbf{0.91}$ & $\mathbf{0.95}$\\
+\addlinespace
+Fashion-MNIST & Uniform Euler & $0.16$ & $0.37$ & $0.62$ & $0.80$\\
+ & BendFlow, config & $0.17$ & $0.56$ & $0.74$ & $0.82$\\
+ & BendFlow, tuned & $0.26$ & $0.59$ & $0.80$ & $\mathbf{0.91}$\\
+ & Fixed schedule & $\mathbf{0.39}$ & $\mathbf{0.66}$ & $\mathbf{0.82}$ & $\mathbf{0.91}$\\
+\addlinespace
+CIFAR-10 & Uniform Euler & $0.09$ & $0.25$ & $0.51$ & $0.69$\\
+ & BendFlow, config & $0.05$ & $0.52$ & $0.62$ & $0.66$\\
+ & BendFlow, tuned & $0.12$ & $0.59$ & $0.76$ & $\mathbf{0.90}$\\
+ & Fixed schedule & $\mathbf{0.38}$ & $\mathbf{0.66}$ & $\mathbf{0.83}$ & $\mathbf{0.90}$\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{schedule_baseline_cifar10_n128/error_vs_nfe.pdf}
+\caption{Mean RMS error to the reference against mean NFE on CIFAR-10, for the four samplers of Section~\ref{sec:exp-sampler}. For the exact field the error mostly measures how often a sample ends on a different training image than the reference; Table~\ref{tab:sampler-exact} reports that fraction directly.}\label{fig:sampler}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{sample_grids_cifar10/grid_dit.pdf}
+\caption{Samples of the CIFAR-10 DiT from the same $8$ noise vectors under each sampler, with the settings of Table~\ref{tab:sampler}. The numbers above each row are the mean NFE and the mean RMS error to the reference over these $8$ images only.}\label{fig:grid}
+\end{figure}
+
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=\linewidth]{exact_field_mnist/mdot_and_bound.pdf}\\[2pt]
+\includegraphics[width=0.75\linewidth]{exact_field_mnist/active_set.pdf}\\[6pt]
+\includegraphics[width=\linewidth]{trained_networks_mnist/mdot_networks.pdf}\\[2pt]
+\includegraphics[width=0.36\linewidth]{trained_networks_mnist/denoiser_error.pdf}\hfill
+\includegraphics[width=0.62\linewidth]{trained_networks_mnist/jacobian_top_eig.pdf}
+\caption{MNIST. From top to bottom: the panels of Figure~\ref{fig:exact}, Figure~\ref{fig:mdot-networks} and Figure~\ref{fig:networks}.}\label{fig:mnist}
+\end{figure}
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=\linewidth]{exact_field_fashion_mnist/mdot_and_bound.pdf}\\[2pt]
+\includegraphics[width=0.75\linewidth]{exact_field_fashion_mnist/active_set.pdf}\\[6pt]
+\includegraphics[width=\linewidth]{trained_networks_fashion_mnist/mdot_networks.pdf}\\[2pt]
+\includegraphics[width=0.36\linewidth]{trained_networks_fashion_mnist/denoiser_error.pdf}\hfill
+\includegraphics[width=0.62\linewidth]{trained_networks_fashion_mnist/jacobian_top_eig.pdf}
+\caption{Fashion-MNIST. From top to bottom: the panels of Figure~\ref{fig:exact}, Figure~\ref{fig:mdot-networks} and Figure~\ref{fig:networks}.}\label{fig:fashion-mnist}
+\end{figure}
+
+
+\begin{figure}[p]
+\centering
+\includegraphics[width=\linewidth]{schedule_baseline_mnist_n128/error_vs_nfe.pdf}\\[6pt]
+\includegraphics[width=\linewidth]{schedule_baseline_fashion_mnist_n128/error_vs_nfe.pdf}
+\caption{Mean RMS error to the reference against mean NFE, as in Figure~\ref{fig:sampler}, on MNIST (top) and Fashion-MNIST (bottom).}\label{fig:sampler-other}
+\end{figure}
 
 \end{document}
