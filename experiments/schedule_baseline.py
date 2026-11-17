@@ -43,6 +43,7 @@ def parse_args():
     p.add_argument("--profile-steps", type=int, default=200, help="uniform Euler steps used to measure the mean profile")
     p.add_argument("--h0-grid", nargs="+", type=float, default=[0.01, 0.05, 0.1])
     p.add_argument("--h-min-grid", nargs="+", type=float, default=[0.001, 0.005, 0.02])
+    p.add_argument("--h-max-grid", nargs="+", type=float, default=[0.25], help="0.25 is the config value; larger values leave room to adapt at NFE 5")
     p.add_argument("--bisect-iters", type=int, default=14, help="bisection steps on log10(tol) per target NFE")
     p.add_argument("--batch", type=int, default=8, help="samples evaluated together (memory)")
     p.add_argument("--checkpoints", default="checkpoints")
@@ -123,15 +124,15 @@ def main():
         tr = batched(sampler, field, xs)
         return tr, np.asarray(tr.xs[:, -1]), np.asarray(tr.nfe)
 
-    def bendflow(tol, h_min, h0):
-        return BendFlowEuler(jnp.asarray(tol), jnp.asarray(h_min), jnp.asarray(cfg.h_max), jnp.asarray(h0), cfg.max_steps)
+    def bendflow(tol, h_min, h0, h_max):
+        return BendFlowEuler(jnp.asarray(tol), jnp.asarray(h_min), jnp.asarray(h_max), jnp.asarray(h0), cfg.max_steps)
 
     # Smallest tol with mean NFE at most target, by bisection on log10(tol). Returns (tol, samples, nfe) or None.
-    def tune_tol(field, xs, target, h_min, h0):
+    def tune_tol(field, xs, target, h_min, h0, h_max):
         lo, hi, best = -8.0, 3.0, None
         for _ in range(args.bisect_iters):
             mid = 0.5 * (lo + hi)
-            _, s, nfe = run(bendflow(10.0**mid, h_min, h0), field, xs)
+            _, s, nfe = run(bendflow(10.0**mid, h_min, h0, h_max), field, xs)
             if nfe.mean() <= target:
                 hi, best = mid, (10.0**mid, s, nfe)
             else:
@@ -171,26 +172,27 @@ def main():
             row = {"target_nfe": target}
             row["uniform"], uni_err = describe(uni, uni_nfe)
 
-            found = tune_tol(field, x_eval, target, cfg.h_min, cfg.h0)
+            found = tune_tol(field, x_eval, target, cfg.h_min, cfg.h0, cfg.h_max)
             if found is not None:
                 row["bendflow"], _ = describe(found[1], found[2], uni_err)
-                row["bendflow"].update(tol=found[0], h0=cfg.h0, h_min=cfg.h_min)
+                row["bendflow"].update(tol=found[0], h0=cfg.h0, h_min=cfg.h_min, h_max=cfg.h_max)
 
             # Settings chosen on the calibration samples by mean error, then only tol is matched to the NFE on the evaluation samples.
             best = None
             for h0 in args.h0_grid:
                 for h_min in args.h_min_grid:
-                    cal = tune_tol(field, x_cal, target, h_min, h0)
-                    if cal is not None:
-                        score = float(rms(cal[1], ref_cal).mean())
-                        if best is None or score < best[0]:
-                            best = (score, h0, h_min)
+                    for h_max in args.h_max_grid:
+                        cal = tune_tol(field, x_cal, target, h_min, h0, h_max)
+                        if cal is not None:
+                            score = float(rms(cal[1], ref_cal).mean())
+                            if best is None or score < best[0]:
+                                best = (score, h0, h_min, h_max)
             if best is not None:
-                _, h0, h_min = best
-                found = tune_tol(field, x_eval, target, h_min, h0)
+                _, h0, h_min, h_max = best
+                found = tune_tol(field, x_eval, target, h_min, h0, h_max)
                 if found is not None:
                     row["bendflow_tuned"], _ = describe(found[1], found[2], uni_err)
-                    row["bendflow_tuned"].update(tol=found[0], h0=h0, h_min=h_min, calib_rms_err_mean=best[0])
+                    row["bendflow_tuned"].update(tol=found[0], h0=h0, h_min=h_min, h_max=h_max, calib_rms_err_mean=best[0])
 
             ts = schedule_from_profile(profile, target)
             _, sch, sch_nfe = run(ScheduleEuler(jnp.asarray(ts)), field, x_eval)
@@ -219,7 +221,7 @@ def main():
                 if "same_image_as_reference" in c:
                     extra.append(f"same img {c['same_image_as_reference']:.2f}")
                 if m == "bendflow_tuned":
-                    extra.append(f"h0 {c['h0']}, h_min {c['h_min']}")
+                    extra.append(f"h0 {c['h0']}, h_min {c['h_min']}, h_max {c.get('h_max', 0.25)}")
                 parts.append(f"{m} {c['rms_err_mean']:.4f}" + (f" ({', '.join(extra)})" if extra else ""))
             print(f"  NFE {r['target_nfe']}: " + " | ".join(parts))
     print(f"wall time {summary['wall_time_s']:.0f}s, saved to {out}/")
