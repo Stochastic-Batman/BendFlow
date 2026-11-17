@@ -1,0 +1,136 @@
+{
+  "args": {
+    "dataset": "mnist",
+    "models": [
+      "unet",
+      "dit"
+    ],
+    "nfe": [
+      5,
+      10,
+      20
+    ],
+    "num_images": 8,
+    "seed": 3,
+    "ref_steps": 1000,
+    "settings": null,
+    "checkpoints": "checkpoints",
+    "out": null
+  },
+  "settings": "results/schedule_baseline_mnist_n128",
+  "models": {
+    "unet": {
+      "5": {
+        "uniform": {
+          "mean_nfe": 5.0,
+          "rms_err_mean": 0.2731684528594721
+        },
+        "bendflow": {
+          "mean_nfe": 5.0,
+          "rms_err_mean": 0.303999253920639
+        },
+        "bendflow_tuned": {
+          "mean_nfe": 5.0,
+          "rms_err_mean": 0.26390675975207323
+        },
+        "schedule": {
+          "mean_nfe": 5.0,
+          "rms_err_mean": 0.24945998392120136
+        }
+      },
+      "10": {
+        "uniform": {
+          "mean_nfe": 10.0,
+          "rms_err_mean": 0.13470093848732084
+        },
+        "bendflow": {
+          "mean_nfe": 10.375,
+          "rms_err_mean": 0.13656648881733618
+        },
+        "bendflow_tuned": {
+          "mean_nfe": 10.375,
+          "rms_err_mean": 0.12808082386985448
+        },
+        "schedule": {
+          "mean_nfe": 10.0,
+          "rms_err_mean": 0.1016303170741594
+        }
+      },
+      "20": {
+        "uniform": {
+          "mean_nfe": 20.0,
+          "rms_err_mean": 0.054115252907332934
+        },
+        "bendflow": {
+          "mean_nfe": 20.375,
+          "rms_err_mean": 0.0426510036588672
+        },
+        "bendflow_tuned": {
+          "mean_nfe": 20.375,
+          "rms_err_mean": 0.0426510036588672
+        },
+        "schedule": {
+          "mean_nfe": 20.0,
+          "rms_err_mean": 0.046600478582768605
+        }
+      }
+    },
+    "dit": {
+      "5": {
+        "uniform": {
+          "mean_nfe": 5.0,
+          "rms_err_mean": 0.3078896590448846
+        },
+        "bendflow": {
+          "mean_nfe": 5.0,
+          "rms_err_mean": 0.3278014622941132
+        },
+        "bendflow_tuned": {
+          "mean_nfe": 5.0,
+          "rms_err_mean": 0.29568271006296765
+        },
+        "schedule": {
+          "mean_nfe": 5.0,
+          "rms_err_mean": 0.297918795993935
+        }
+      },
+      "10": {
+        "uniform": {
+          "mean_nfe": 10.0,
+          "rms_err_mean": 0.2096237076138332
+        },
+        "bendflow": {
+          "mean_nfe": 10.25,
+          "rms_err_mean": 0.20423004192112681
+        },
+        "bendflow_tuned": {
+          "mean_nfe": 10.375,
+          "rms_err_mean": 0.20499896226245223
+        },
+        "schedule": {
+          "mean_nfe": 10.0,
+          "rms_err_mean": 0.19844534084904047
+        }
+      },
+      "20": {
+        "uniform": {
+          "mean_nfe": 20.0,
+          "rms_err_mean": 0.09038858828735187
+        },
+        "bendflow": {
+          "mean_nfe": 20.25,
+          "rms_err_mean": 0.07846865691209051
+        },
+        "bendflow_tuned": {
+          "mean_nfe": 20.25,
+          "rms_err_mean": 0.07846865691209051
+        },
+        "schedule": {
+          "mean_nfe": 20.0,
+          "rms_err_mean": 0.08282555245962919
+        }
+      }
+    }
+  },
+  "wall_time_s": 57.743870367005
+}

@@ -7,6 +7,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import matplotlib
+import matplotlib.ticker
 import numpy as np
 
 matplotlib.use("Agg")
@@ -23,7 +24,7 @@ from bendflow.samplers import BendFlowEuler, ScheduleEuler, UniformEuler
 METHODS = {
     "uniform": ("uniform Euler", "#2a78d6", "o"),
     "bendflow": ("BendFlow, config settings", "#eb6834", "s"),
-    "bendflow_tuned": ("BendFlow, tuned $h_0$, $h_{\\min}$", "#1baf7a", "^"),
+    "bendflow_tuned": ("BendFlow, tuned settings", "#1baf7a", "^"),
     "schedule": ("fixed schedule from mean profile", "#eda100", "D"),
 }
 FIELD_LABELS = {"exact": "exact field", "unet": "U-Net", "dit": "DiT"}
@@ -82,6 +83,9 @@ def plot(path, summary):
                 ax.plot(*zip(*pts), color=color, lw=2, marker=marker, ms=6, label=label)
         ax.set_xscale("log")
         ax.set_yscale("log")
+        nfes = sorted({r["target_nfe"] for r in rows})
+        ax.set_xticks(nfes, [str(v) for v in nfes])
+        ax.xaxis.set_minor_locator(matplotlib.ticker.NullLocator())
         ax.set_xlabel("mean NFE", color=INK)
         ax.set_title(f"{FIELD_LABELS[name]}: mean RMS error to reference", color=INK, fontsize=10)
         ax.grid(True, color=GRID, lw=0.6, which="both")

@@ -1,0 +1,136 @@
+{
+  "args": {
+    "dataset": "fashion_mnist",
+    "models": [
+      "unet",
+      "dit"
+    ],
+    "nfe": [
+      5,
+      10,
+      20
+    ],
+    "num_images": 8,
+    "seed": 3,
+    "ref_steps": 1000,
+    "settings": null,
+    "checkpoints": "checkpoints",
+    "out": null
+  },
+  "settings": "results/schedule_baseline_fashion_mnist_n128",
+  "models": {
+    "unet": {
+      "5": {
+        "uniform": {
+          "mean_nfe": 5.0,
+          "rms_err_mean": 0.3979771727732483
+        },
+        "bendflow": {
+          "mean_nfe": 5.0,
+          "rms_err_mean": 0.3736801610077023
+        },
+        "bendflow_tuned": {
+          "mean_nfe": 5.0,
+          "rms_err_mean": 0.31135464664400403
+        },
+        "schedule": {
+          "mean_nfe": 5.0,
+          "rms_err_mean": 0.3561624840430232
+        }
+      },
+      "10": {
+        "uniform": {
+          "mean_nfe": 10.0,
+          "rms_err_mean": 0.26988295561744624
+        },
+        "bendflow": {
+          "mean_nfe": 10.0,
+          "rms_err_mean": 0.17992465211207695
+        },
+        "bendflow_tuned": {
+          "mean_nfe": 10.0,
+          "rms_err_mean": 0.17992465211207695
+        },
+        "schedule": {
+          "mean_nfe": 10.0,
+          "rms_err_mean": 0.2007504814425105
+        }
+      },
+      "20": {
+        "uniform": {
+          "mean_nfe": 20.0,
+          "rms_err_mean": 0.08800117940384043
+        },
+        "bendflow": {
+          "mean_nfe": 19.5,
+          "rms_err_mean": 0.07267424596033138
+        },
+        "bendflow_tuned": {
+          "mean_nfe": 19.5,
+          "rms_err_mean": 0.07267424596033138
+        },
+        "schedule": {
+          "mean_nfe": 20.0,
+          "rms_err_mean": 0.0746416225715445
+        }
+      }
+    },
+    "dit": {
+      "5": {
+        "uniform": {
+          "mean_nfe": 5.0,
+          "rms_err_mean": 0.35456315144544154
+        },
+        "bendflow": {
+          "mean_nfe": 5.0,
+          "rms_err_mean": 0.32878169075290997
+        },
+        "bendflow_tuned": {
+          "mean_nfe": 5.0,
+          "rms_err_mean": 0.23823219347009622
+        },
+        "schedule": {
+          "mean_nfe": 5.0,
+          "rms_err_mean": 0.3228329260319699
+        }
+      },
+      "10": {
+        "uniform": {
+          "mean_nfe": 10.0,
+          "rms_err_mean": 0.20288384325458703
+        },
+        "bendflow": {
+          "mean_nfe": 9.875,
+          "rms_err_mean": 0.16447934639303136
+        },
+        "bendflow_tuned": {
+          "mean_nfe": 9.875,
+          "rms_err_mean": 0.16447934639303136
+        },
+        "schedule": {
+          "mean_nfe": 10.0,
+          "rms_err_mean": 0.1834722328873183
+        }
+      },
+      "20": {
+        "uniform": {
+          "mean_nfe": 20.0,
+          "rms_err_mean": 0.11451218384359718
+        },
+        "bendflow": {
+          "mean_nfe": 19.25,
+          "rms_err_mean": 0.0971187926213226
+        },
+        "bendflow_tuned": {
+          "mean_nfe": 19.25,
+          "rms_err_mean": 0.09311590806337572
+        },
+        "schedule": {
+          "mean_nfe": 20.0,
+          "rms_err_mean": 0.0936893311940655
+        }
+      }
+    }
+  },
+  "wall_time_s": 58.588019434013404
+}
