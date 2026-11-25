@@ -3,27 +3,18 @@ import json
 import time
 from pathlib import Path
 
-import equinox as eqx
-import jax
-import jax.numpy as jnp
 import matplotlib
 import numpy as np
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from bendflow.config import load_math_config
-from bendflow.data import load_images
-from bendflow.fields import ExactField
-from bendflow.networks import load_network
-from bendflow.posterior import EmpiricalPosterior
-from bendflow.samplers import BendFlowEuler, UniformEuler
+from bendflow.plotting import save_figure, science_figure
 
 # Uniform Euler, BendFlow: categorical slots 1 and 2 of the validated palette.
 COLORS = {"uniform": "#2a78d6", "bendflow": "#eb6834"}
 LABELS = {"uniform": "uniform Euler", "bendflow": "BendFlow (Alg. 1)"}
 FIELD_LABELS = {"exact": "exact field", "unet": "U-Net", "dit": "DiT"}
-INK, GRID = "#52514e", "#e4e3df"
 
 
 def parse_args():
@@ -46,6 +37,7 @@ def rms(a, b):
     return np.sqrt(np.mean((np.asarray(a) - np.asarray(b)) ** 2, axis=-1))
 
 
+@science_figure
 def plot(path, summary, fields):
     fig, axes = plt.subplots(1, len(fields), figsize=(3.6 * len(fields), 3.0), squeeze=False)
     for ax, name in zip(axes[0], fields):
@@ -54,25 +46,15 @@ def plot(path, summary, fields):
             ax.plot([r[f"{s}_mean_nfe"] for r in rows], [r[f"{s}_rms_err_median"] for r in rows], color=COLORS[s], lw=2, marker="o", ms=5, label=LABELS[s])
         ax.set_xscale("log")
         ax.set_yscale("log")
-        ax.set_xlabel("mean NFE", color=INK)
-        ax.set_title(f"{FIELD_LABELS[name]}: RMS error to reference", color=INK, fontsize=10)
-        ax.grid(True, color=GRID, lw=0.6, which="both")
-        ax.set_axisbelow(True)
-        ax.tick_params(colors=INK, labelsize=8)
-        for side in ("top", "right"):
-            ax.spines[side].set_visible(False)
-        for side in ("left", "bottom"):
-            ax.spines[side].set_color(GRID)
+        ax.grid(True, which="both")
+        ax.set_xlabel("mean NFE")
+        ax.set_title(f"{FIELD_LABELS[name]}: RMS error to reference", fontsize=10)
     axes[0][0].legend(frameon=False, fontsize=9)
-    fig.tight_layout()
-    fig.savefig(path.with_suffix(".png"), dpi=200)
-    fig.savefig(path.with_suffix(".pdf"))
-    plt.close(fig)
+    save_figure(fig, path)
 
 
 def main():
     args = parse_args()
-    jax.config.update("jax_enable_x64", True)
     out = Path(args.out or f"results/sampler_comparison_{args.dataset}")
     out.mkdir(parents=True, exist_ok=True)
     if args.replot:
@@ -80,6 +62,19 @@ def main():
         plot(out / "error_vs_nfe", summary, list(summary["fields"]))
         print(f"figure redrawn in {out}/")
         return
+
+    import equinox as eqx
+    import jax
+    import jax.numpy as jnp
+
+    from bendflow.config import load_math_config
+    from bendflow.data import load_images
+    from bendflow.fields import ExactField
+    from bendflow.networks import load_network
+    from bendflow.posterior import EmpiricalPosterior
+    from bendflow.samplers import BendFlowEuler, UniformEuler
+
+    jax.config.update("jax_enable_x64", True)
 
     start = time.perf_counter()
     cfg = load_math_config().sampler

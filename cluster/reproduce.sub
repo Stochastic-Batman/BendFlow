@@ -1,0 +1,21 @@
+universe = vanilla
+executable = /bin/bash
+arguments = cluster/reproduce.sh $(group) $(Cluster)
+transfer_executable = False
+should_transfer_files = NO
+
+request_cpus = 4
+request_memory = 24 GB
+request_disk = 10 GB
+request_gpus = 1
+require_gpus = regexp("A100|V100", DeviceName, "i")
+
+batch_name = BendFlow reproduction
+output = reproduction/logs/$(Cluster).$(Process).out
+error = reproduction/logs/$(Cluster).$(Process).err
+log = reproduction/logs/$(Cluster).$(Process).log
+
+queue group from (
+    grayscale
+    cifar10
+)

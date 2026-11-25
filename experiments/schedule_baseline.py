@@ -3,9 +3,6 @@ import json
 import time
 from pathlib import Path
 
-import equinox as eqx
-import jax
-import jax.numpy as jnp
 import matplotlib
 import matplotlib.ticker
 import numpy as np
@@ -13,12 +10,7 @@ import numpy as np
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from bendflow.config import load_math_config
-from bendflow.data import load_images
-from bendflow.fields import ExactField
-from bendflow.networks import load_network
-from bendflow.posterior import EmpiricalPosterior
-from bendflow.samplers import BendFlowEuler, ScheduleEuler, UniformEuler
+from bendflow.plotting import save_figure, science_figure
 
 # Categorical slots 1 to 4 of the validated palette; the markers carry identity as well, since slots 3 and 4 have low contrast.
 METHODS = {
@@ -28,7 +20,6 @@ METHODS = {
     "schedule": ("fixed schedule from mean profile", "#eda100", "D"),
 }
 FIELD_LABELS = {"exact": "exact field", "unet": "U-Net", "dit": "DiT"}
-INK, GRID = "#52514e", "#e4e3df"
 
 
 def parse_args():
@@ -72,6 +63,7 @@ def schedule_from_profile(profile: np.ndarray, n: int) -> np.ndarray:
     return ts
 
 
+@science_figure
 def plot(path, summary):
     fields = list(summary["fields"])
     fig, axes = plt.subplots(1, len(fields), figsize=(3.8 * len(fields), 3.2), squeeze=False)
@@ -83,34 +75,37 @@ def plot(path, summary):
                 ax.plot(*zip(*pts), color=color, lw=2, marker=marker, ms=6, label=label)
         ax.set_xscale("log")
         ax.set_yscale("log")
+        ax.grid(True, which="both")
         nfes = sorted({r["target_nfe"] for r in rows})
         ax.set_xticks(nfes, [str(v) for v in nfes])
         ax.xaxis.set_minor_locator(matplotlib.ticker.NullLocator())
-        ax.set_xlabel("mean NFE", color=INK)
-        ax.set_title(f"{FIELD_LABELS[name]}: mean RMS error to reference", color=INK, fontsize=10)
-        ax.grid(True, color=GRID, lw=0.6, which="both")
-        ax.set_axisbelow(True)
-        ax.tick_params(colors=INK, labelsize=8)
-        for side in ("top", "right"):
-            ax.spines[side].set_visible(False)
-        for side in ("left", "bottom"):
-            ax.spines[side].set_color(GRID)
+        ax.set_xlabel("mean NFE")
+        ax.set_title(f"{FIELD_LABELS[name]}: mean RMS error to reference", fontsize=10)
     axes[0][0].legend(frameon=False, fontsize=8)
-    fig.tight_layout()
-    fig.savefig(path.with_suffix(".png"), dpi=200)
-    fig.savefig(path.with_suffix(".pdf"))
-    plt.close(fig)
+    save_figure(fig, path)
 
 
 def main():
     args = parse_args()
-    jax.config.update("jax_enable_x64", True)
     out = Path(args.out or f"results/schedule_baseline_{args.dataset}")
     out.mkdir(parents=True, exist_ok=True)
     if args.replot:
         plot(out / "error_vs_nfe", json.loads((out / "summary.json").read_text()))
         print(f"figure redrawn in {out}/")
         return
+
+    import equinox as eqx
+    import jax
+    import jax.numpy as jnp
+
+    from bendflow.config import load_math_config
+    from bendflow.data import load_images
+    from bendflow.fields import ExactField
+    from bendflow.networks import load_network
+    from bendflow.posterior import EmpiricalPosterior
+    from bendflow.samplers import BendFlowEuler, ScheduleEuler, UniformEuler
+
+    jax.config.update("jax_enable_x64", True)
 
     start = time.perf_counter()
     cfg = load_math_config().sampler

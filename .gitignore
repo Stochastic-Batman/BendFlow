@@ -221,6 +221,7 @@ __marimo__/
 
 # BendFlow
 checkpoints/
+reproduction/
 
 # LaTeX build files
 *.aux

@@ -383,8 +383,8 @@
 
   #pause
 
-  #hl[What we have.] The last two velocity evaluations give predictions $hat(m)_(k - 1)$ and $hat(m)_k$. Divide their change by the elapsed time to estimate the current rate, with #hl[no extra model calls].
-  $ underbrace(hat(dot(m))_k, "estimate of" thin dot(m) (t_k)) = (hat(m)_k - hat(m)_(k - 1)) / (t_k - t_(k - 1)) $
+  #hl[What we have.] We reuse the predictions from the last two velocity evaluations, so the estimate takes #hl[no extra model calls].
+  $ underbrace(hat(dot(m))_k, "average rate over the last step") = (hat(m)_k - hat(m)_(k - 1)) / (t_k - t_(k - 1)) $
 
   #pause
 

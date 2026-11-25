@@ -245,7 +245,7 @@ Computing $dot(g)_i$ gives the linear coefficient $b = (dot(alpha)_t x + alpha_t
 #corollary(note: [Euler's error])[
 Since $u = dot(x)$, Taylor's theorem gives $x(t + h) = x + h u + h^2/2 dot.double(x) + o(h^2)$. An Euler step keeps only $x + h u$, so by @eq:acc-general its local error is
 $ x(t + h) - (x + h u) = h^2/2 (dot.double(alpha)_t m + dot.double(sigma)_t hat(epsilon) + sigma_t dot(gamma)_t dot(m)) + o(h^2). $ <eq:euler>
-For the linear path the schedule term vanishes and the local error is $h^2 \/ (2(1 - t)) thin dot(m) + O(h^3)$.
+For the linear path, the schedule and the finite-set posterior weights are smooth for $t < 1$, so the exact velocity field and its trajectories are smooth there. The schedule term vanishes, and at each fixed $t < 1$ the local error is $h^2 \/ (2(1 - t)) thin dot(m) + O(h^3)$.
 ] <cor:euler>
 
 *Interpretation of the results.* The posterior-dependent part of the acceleration is determined by the spread $C$ and the asymmetry $kappa$ of the posterior. If one image has all the weight, then $C = 0$ and $kappa = 0$, so $dot(m) = 0$: only the schedule term $dot.double(alpha)_t m + dot.double(sigma)_t hat(epsilon)$ remains. For the linear path, the trajectory is a straight line and Euler is exact. That agrees with the zero-baseline result of #citet(<rao2026geometry>). If the posterior is symmetric about $m$, then $kappa = 0$ and only the $C hat(epsilon)$ term remains. For exactly two images with equal weights that term vanishes too, because then $C = Delta^2/4 e e^top$ with $e dot.op hat(epsilon) = 0$; the bending occurs next to the symmetric point, not at it.
@@ -274,7 +274,7 @@ and $||dot.double(x)|| <= ||dot.double(alpha)_t m + dot.double(sigma)_t hat(epsi
 
 The last inequality follows from @eq:acc-general and the triangle inequality. For the linear path its first term vanishes and it reads $||dot.double(x)|| = ||dot(m)|| \/ (1 - t)$.
 
-The proofs are in @app:bounds. The bound depends on $C$ and $kappa$ depend on $x$ and $t$ only through the active set, which makes it a local, data-dependent statement. Inserting @eq:lam into the eigenvalue range @eq:eigrange gives
+The proofs are in @app:bounds. For fixed $delta$, the bounds on $lambda_max (C)$ and $||kappa||$ depend on $x$ and $t$ only through the active-set diameter $D_A$. Inserting @eq:lam into the eigenvalue range @eq:eigrange gives
 $ lambda_max (nabla_x u_t) <= gamma_t dot(gamma)_t (D_A^2/4 + delta D^2) + (dot(sigma)_t)/(sigma_t). $ <eq:lamjac>
 
 *Tightness.* Take $x^((1)), x^((2))$ with $||x^((1)) - x^((2))|| = Delta$ and $x = alpha_t dot.op (x^((1)) + x^((2)))/2$. Both are equally far from $x \/ alpha_t$, so $w_1 = w_2 = 1/2$, both are active, and $D_A = Delta$. Along $e = (x^((1)) - x^((2)))/Delta$ we get $e^top C e = 1/2 (Delta/2)^2 + 1/2 (Delta/2)^2 = Delta^2/4$, so $D_A^2/4$ cannot be improved.
@@ -290,7 +290,7 @@ $
 h^2/2 thin dot.double(x) + o(h^2) = h^2/2 (dot.double(alpha)_t m + dot.double(sigma)_t hat(epsilon) + sigma_t dot(gamma)_t dot(m)) + o(h^2).
 $
 
-The first two terms come from the schedule. They are the acceleration of the conditional path $alpha_t m + sigma_t hat(epsilon)$ with both estimates held fixed.  Unless the schedule is linear, these terms are nonzero even if the posterior has committed (i.e. $dot(m) = 0$). Deriving a step rule built on this error would shrink the step size where the data poses no difficulty. DDIM #citet(<song2021ddim>) avoids this. At any step $t_k$, the network output $v_k approx u_(t_k)(x_k)$ determines the estimate $hat(m)_k$ of the clean image and the estimate $hat(epsilon)_k$ of the noise applied. By @eq:u:
+The first two terms come from the schedule. They are the acceleration of the conditional path $alpha_t m + sigma_t hat(epsilon)$ with both estimates held fixed.  Unless the schedule is linear, these terms are nonzero even if the posterior has committed (i.e. $dot(m) = 0$). Deriving a step rule built on this error would shrink the step size where the data poses no difficulty. DDIM @song2021ddim avoids this. At any step $t_k$, the network output $v_k approx u_(t_k)(x_k)$ determines the estimate $hat(m)_k$ of the clean image and the estimate $hat(epsilon)_k$ of the noise applied. By @eq:u:
 
 $
   x_k = alpha_(t_k) hat(m)_k + sigma_(t_k) hat(epsilon)_k, quad "and" v_k = dot(alpha)_(t_k) hat(m)_k + dot(sigma)_(t_k) hat(epsilon)_k
@@ -452,7 +452,7 @@ The connection between the Jacobian of the denoiser and the posterior covariance
 The theoretical results concern the exact marginal field of a finite training set under the Gaussian paths specified in @sec:setup. Sampling with that field reproduces training images, so it serves as a reference for memorisation and not as a generator. The bound @eq:local is an upper bound and can be loose, in particular through the factor $||hat(epsilon)||$ and the bound on $kappa$. @prop:est covers the exact field only, and the step-size rule controls the local error; we do not prove a bound on the global error. The novelty claims rest on a search of the closest literature and not on a proof that the results are absent elsewhere. The experiments confirm the identities; the bound on $lambda_max (C)$ is within one to two orders of magnitude, but those on $||kappa||$ and $||dot(m)||$ are too loose to use quantitatively. The bend peaks at commitment on most, but not all, exact trajectories, and trained networks follow the exact field only until commitment. The step-size rule helps on trained networks, most at low NFE, but it needs tuned settings, and a fixed schedule built from the mean curvature profile captures much of the gain; on MNIST and the exact field it is as good or better. We measure the error to a fine-step reference rather than sample quality, with $128$ samples, one draw of noise and small networks.
 
 #heading(numbering: none)[LLM Usage]
-Claude (Anthropic) was used to verify the derivations, to search for related work, and it introduced the notation $C$ and $kappa$; $m$ is also the standard notation for the denoiser in the literature. Claude was also used to check the author-written Python code and to write all the tests and the testing scripts, which the author reviewed manually. The handwritten math derivations are available in the repository, and this LaTeX document was constructed from them.
+Claude (Anthropic) was used to verify the derivations, to search for related work, and it introduced the notation $C$ and $kappa$; $m$ is also the standard notation for the denoiser in the literature. Claude was also used to check the author-written Python code and to write all the tests and the testing scripts, which the author reviewed manually. The handwritten math derivations are available in the repository, and this document was constructed from them.
 
 #bibliography("paper.bib", title: [References], style: "apa")
 

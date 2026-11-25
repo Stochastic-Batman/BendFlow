@@ -3,30 +3,17 @@ import json
 import time
 from pathlib import Path
 
-import equinox as eqx
-import jax
-import jax.numpy as jnp
 import matplotlib
 import numpy as np
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from bendflow.config import load_math_config
-from bendflow.curvature import (
-    divergence_closed_form,
-    local_bound,
-    mdot_autodiff,
-    mdot_closed_form,
-)
-from bendflow.data import load_images
-from bendflow.fields import ExactField
-from bendflow.posterior import EmpiricalPosterior, diameter
-from bendflow.samplers import UniformEuler
+from bendflow.plotting import save_figure, science_figure
 
 # A point counts as undecided while the largest posterior weight is below this.
 UNDECIDED = 0.99
-BLUE, ORANGE, INK, GRID = "#2a78d6", "#eb6834", "#52514e", "#e4e3df"
+BLUE, ORANGE = "#2a78d6", "#eb6834"
 
 
 def parse_args():
@@ -51,12 +38,17 @@ def parse_args():
     return p.parse_args()
 
 
-def rel_err(a, b) -> float:
-    return float(jnp.linalg.norm(a - b) / jnp.linalg.norm(b))
-
-
 # Relative errors of the closed forms against autodiff and central differences.
 def identity_checks(post, field, points, key, div_points, div_batch):
+    import equinox as eqx
+    import jax
+    import jax.numpy as jnp
+
+    from bendflow.curvature import divergence_closed_form, mdot_autodiff, mdot_closed_form
+
+    def rel_err(a, b):
+        return float(jnp.linalg.norm(a - b) / jnp.linalg.norm(b))
+
     dtype = post.data.dtype
     h = float(jnp.finfo(dtype).eps) ** (1 / 3)
     d = post.data.shape[1]
@@ -106,6 +98,7 @@ def identity_checks(post, field, points, key, div_points, div_batch):
     return rows
 
 
+@science_figure
 def plot_mdot_and_bound(path, ts, mdot, bound_steps, bound):
     n = bound.shape[0]
     fig, axes = plt.subplots(1, n, figsize=(3.2 * n, 3.0), sharey=True, squeeze=False)
@@ -128,52 +121,30 @@ def plot_mdot_and_bound(path, ts, mdot, bound_steps, bound):
             label="bound (Thm. 2)",
         )
         ax.set_yscale("log")
-        ax.set_xlabel("$t$", color=INK)
-        ax.set_title(f"trajectory {j}", color=INK, fontsize=10)
-        style(ax)
+        ax.set_xlabel("$t$")
+        ax.set_title(f"trajectory {j}", fontsize=10)
     # After the posterior commits, ||mdot|| underflows towards 0; cut the axis six decades below its peak.
     axes[0][0].set_ylim(bottom=float(np.max(mdot)) * 1e-6)
     axes[0][0].legend(frameon=False, fontsize=9)
-    save(fig, path)
+    save_figure(fig, path)
 
 
+@science_figure
 def plot_active_set(path, ts, n_active, d_active):
     fig, axes = plt.subplots(1, 2, figsize=(7.5, 3.0))
     for j in range(n_active.shape[0]):
         axes[0].plot(ts, n_active[j], color=BLUE, lw=1.5, alpha=0.7)
         axes[1].plot(ts, d_active[j], color=BLUE, lw=1.5, alpha=0.7)
     axes[0].set_yscale("log")
-    axes[0].set_title("active-set size $|A|$ (one line per trajectory)", color=INK, fontsize=10)
-    axes[1].set_title("active diameter $D_A$", color=INK, fontsize=10)
+    axes[0].set_title("active-set size $|A|$ (one line per trajectory)", fontsize=10)
+    axes[1].set_title("active diameter $D_A$", fontsize=10)
     for ax in axes:
-        ax.set_xlabel("$t$", color=INK)
-        style(ax)
-    save(fig, path)
-
-
-def style(ax):
-    ax.grid(True, color=GRID, lw=0.6)
-    ax.set_axisbelow(True)
-    ax.tick_params(colors=INK, labelsize=8)
-    for side in ("top", "right"):
-        ax.spines[side].set_visible(False)
-    for side in ("left", "bottom"):
-        ax.spines[side].set_color(GRID)
-
-
-def save(fig, path):
-    fig.tight_layout()
-    fig.savefig(path.with_suffix(".png"), dpi=200)
-    fig.savefig(path.with_suffix(".pdf"))
-    plt.close(fig)
+        ax.set_xlabel("$t$")
+    save_figure(fig, path)
 
 
 def main():
     args = parse_args()
-    if not args.float32:
-        jax.config.update("jax_enable_x64", True)
-    start = time.perf_counter()
-    cfg = load_math_config()
     out = Path(args.out or f"results/exact_field_{args.dataset}")
     out.mkdir(parents=True, exist_ok=True)
     if args.replot:
@@ -182,6 +153,22 @@ def main():
         plot_active_set(out / "active_set", c["ts"][c["bound_steps"]], c["n_active"], c["d_active"])
         print(f"figures redrawn in {out}/")
         return
+
+    import equinox as eqx
+    import jax
+    import jax.numpy as jnp
+
+    from bendflow.config import load_math_config
+    from bendflow.curvature import local_bound, mdot_closed_form
+    from bendflow.data import load_images
+    from bendflow.fields import ExactField
+    from bendflow.posterior import EmpiricalPosterior, diameter
+    from bendflow.samplers import UniformEuler
+
+    if not args.float32:
+        jax.config.update("jax_enable_x64", True)
+    start = time.perf_counter()
+    cfg = load_math_config()
 
     raw = load_images(args.dataset)
     post = EmpiricalPosterior(jnp.asarray(raw, dtype=jnp.float32 if args.float32 else jnp.float64))

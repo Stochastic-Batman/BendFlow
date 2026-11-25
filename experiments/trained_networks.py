@@ -3,29 +3,19 @@ import json
 import time
 from pathlib import Path
 
-import equinox as eqx
-import jax
-import jax.numpy as jnp
 import matplotlib
 import numpy as np
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from bendflow.config import load_math_config
-from bendflow.curvature import jacobian_top_eig, mdot_autodiff, mdot_closed_form
-from bendflow.data import load_images
-from bendflow.fields import ExactField
-from bendflow.networks import load_network
-from bendflow.posterior import EmpiricalPosterior
-from bendflow.samplers import UniformEuler
+from bendflow.plotting import save_figure, science_figure
 
 # A point counts as undecided while the largest posterior weight is below this (same as exact_field.py).
 UNDECIDED = 0.99
 # Exact field, U-Net, DiT: categorical slots 1 to 3 of the validated palette.
 COLORS = {"exact": "#2a78d6", "unet": "#eb6834", "dit": "#1baf7a"}
 LABELS = {"exact": "exact field", "unet": "U-Net", "dit": "DiT"}
-INK, GRID = "#52514e", "#e4e3df"
 
 
 def parse_args():
@@ -41,11 +31,6 @@ def parse_args():
     p.add_argument("--out", default=None, help="output directory")
     p.add_argument("--replot", action="store_true", help="only redraw the figures from the saved curves.npz")
     return p.parse_args()
-
-
-def run_trajectories(field, x0s, steps):
-    sampler = UniformEuler(steps)
-    return eqx.filter_jit(lambda f, xs: jax.lax.map(lambda x: sampler(f, x), xs))(field, x0s)
 
 
 def first_peak_time(ts, curve) -> float:
@@ -65,6 +50,7 @@ def positive(a):
     return np.where(a > 0, a, np.nan)
 
 
+@science_figure
 def plot_mdot(path, ts, curves, n_show):
     names = [k for k in curves if k != "exact"]
     fig, axes = plt.subplots(len(names), n_show, figsize=(3.0 * n_show, 2.7 * len(names)), sharex=True, sharey=True, squeeze=False)
@@ -76,30 +62,30 @@ def plot_mdot(path, ts, curves, n_show):
             ax.plot(ts, positive(curves[name]["mdot"][j]), color=COLORS[name], lw=2, label=f"{LABELS[name]}, autodiff")
             ax.plot(ts[:-1], positive(curves[name]["mdot_est"][j]), color=COLORS[name], lw=1.5, ls="--", label=f"{LABELS[name]}, estimator (18)")
             ax.set_yscale("log")
-            ax.set_title(f"{LABELS[name]}, trajectory {j}", color=INK, fontsize=10)
+            ax.set_title(f"{LABELS[name]}, trajectory {j}", fontsize=10)
             if r == len(names) - 1:
-                ax.set_xlabel("$t$", color=INK)
-            style(ax)
-        axes[r][0].set_ylabel(r"$\|\dot m\|$", color=INK)
+                ax.set_xlabel("$t$")
+        axes[r][0].set_ylabel(r"$\|\dot m\|$")
         axes[r][0].legend(frameon=False, fontsize=8)
     # After the posterior commits, the exact ||mdot|| falls towards 0; cut the axis four decades below the peak.
     axes[0][0].set_ylim(top * 1e-4, top * 3)
-    save(fig, path)
+    save_figure(fig, path)
 
 
+@science_figure
 def plot_denoiser_error(path, ts, curves):
     fig, ax = plt.subplots(figsize=(4.8, 3.0))
     for name, c in curves.items():
         if name == "exact":
             continue
         ax.plot(ts, np.median(c["denoiser_err"], axis=0), color=COLORS[name], lw=2, label=LABELS[name])
-    ax.set_xlabel("$t$", color=INK)
-    ax.set_title(r"RMS of $\hat x_1 - m$ per pixel (median over trajectories)", color=INK, fontsize=10)
+    ax.set_xlabel("$t$")
+    ax.set_title(r"RMS of $\hat x_1 - m$ per pixel (median over trajectories)", fontsize=10)
     ax.legend(frameon=False, fontsize=9)
-    style(ax)
-    save(fig, path)
+    save_figure(fig, path)
 
 
+@science_figure
 def plot_jacobian(path, eig_ts, curves):
     names = [k for k in curves if k != "exact"]
     fig, axes = plt.subplots(1, len(names), figsize=(4.2 * len(names), 3.0), sharey=True, squeeze=False)
@@ -109,28 +95,10 @@ def plot_jacobian(path, eig_ts, curves):
             ax.plot(eig_ts, c["eig_exact"][j], color=COLORS["exact"], lw=1.5, marker="o", ms=4, label="exact upper end (5)" if j == 0 else None)
             ax.plot(eig_ts, c["eig_net"][j], color=COLORS[name], lw=1.5, marker="s", ms=4, label=f"{LABELS[name]}, top eigenvalue" if j == 0 else None)
         ax.set_yscale("symlog", linthresh=1.0)
-        ax.set_xlabel("$t$", color=INK)
-        ax.set_title(f"{LABELS[name]}: top eigenvalue of the Jacobian", color=INK, fontsize=10)
+        ax.set_xlabel("$t$")
+        ax.set_title(f"{LABELS[name]}: top eigenvalue of the Jacobian", fontsize=10)
         ax.legend(frameon=False, fontsize=8)
-        style(ax)
-    save(fig, path)
-
-
-def style(ax):
-    ax.grid(True, color=GRID, lw=0.6)
-    ax.set_axisbelow(True)
-    ax.tick_params(colors=INK, labelsize=8)
-    for side in ("top", "right"):
-        ax.spines[side].set_visible(False)
-    for side in ("left", "bottom"):
-        ax.spines[side].set_color(GRID)
-
-
-def save(fig, path):
-    fig.tight_layout()
-    fig.savefig(path.with_suffix(".png"), dpi=200)
-    fig.savefig(path.with_suffix(".pdf"))
-    plt.close(fig)
+    save_figure(fig, path)
 
 
 def draw_all(out, ts, eig_steps, curves, n_show):
@@ -141,8 +109,6 @@ def draw_all(out, ts, eig_steps, curves, n_show):
 
 def main():
     args = parse_args()
-    jax.config.update("jax_enable_x64", True)
-    start = time.perf_counter()
     out = Path(args.out or f"results/trained_networks_{args.dataset}")
     out.mkdir(parents=True, exist_ok=True)
     n_show = min(4, args.num_traj)
@@ -157,6 +123,25 @@ def main():
         draw_all(out, z["ts"], z["eig_steps"], curves, n_show)
         print(f"figures redrawn in {out}/")
         return
+
+    import equinox as eqx
+    import jax
+    import jax.numpy as jnp
+
+    from bendflow.config import load_math_config
+    from bendflow.curvature import jacobian_top_eig, mdot_autodiff, mdot_closed_form
+    from bendflow.data import load_images
+    from bendflow.fields import ExactField
+    from bendflow.networks import load_network
+    from bendflow.posterior import EmpiricalPosterior
+    from bendflow.samplers import UniformEuler
+
+    jax.config.update("jax_enable_x64", True)
+    start = time.perf_counter()
+
+    def run_trajectories(field, x0s, steps):
+        sampler = UniformEuler(steps)
+        return eqx.filter_jit(lambda f, xs: jax.lax.map(lambda x: sampler(f, x), xs))(field, x0s)
 
     cfg = load_math_config()
     raw = load_images(args.dataset)

@@ -3,19 +3,13 @@ import json
 import time
 from pathlib import Path
 
-import equinox as eqx
-import jax
-import jax.numpy as jnp
 import matplotlib
 import numpy as np
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from bendflow.config import load_math_config
-from bendflow.data import image_shape
-from bendflow.networks import load_network
-from bendflow.samplers import BendFlowEuler, ScheduleEuler, UniformEuler
+from bendflow.plotting import save_figure, science_figure
 
 ROWS = {
     "reference": "reference (1000 steps)",
@@ -25,7 +19,6 @@ ROWS = {
     "schedule": "fixed schedule",
 }
 FIELD_LABELS = {"unet": "U-Net", "dit": "DiT"}
-INK = "#52514e"
 
 
 def parse_args():
@@ -56,6 +49,7 @@ def strip(samples, shape):
     return out
 
 
+@science_figure
 def plot(path, title, panels, shape):
     nfes = list(panels)
     fig, axes = plt.subplots(len(ROWS), len(nfes), figsize=(3.4 * len(nfes), 0.75 * len(ROWS) + 0.6), squeeze=False)
@@ -63,31 +57,39 @@ def plot(path, title, panels, shape):
     for j, nfe in enumerate(nfes):
         for i, m in enumerate(ROWS):
             ax = axes[i][j]
+            ax.grid(False)
             ax.set_xticks([])
             ax.set_yticks([])
             for side in ax.spines.values():
                 side.set_visible(False)
             cell = panels[nfe].get(m)
             if cell is None:
-                ax.text(0.5, 0.5, "n/a", ha="center", va="center", color=INK, fontsize=8, transform=ax.transAxes)
+                ax.text(0.5, 0.5, "n/a", ha="center", va="center", fontsize=8, transform=ax.transAxes)
                 continue
             img = strip(cell["samples"], shape)
             ax.imshow(img[..., 0] if gray else img, cmap="gray" if gray else None, vmin=0.0, vmax=1.0, interpolation="nearest")
             if m != "reference":
-                ax.set_title(f"NFE {cell['mean_nfe']:.1f}, RMS err {cell['rms_err_mean']:.3f}", color=INK, fontsize=7, pad=2)
+                ax.set_title(f"NFE {cell['mean_nfe']:.1f}, RMS err {cell['rms_err_mean']:.3f}", fontsize=7, pad=2)
             if j == 0:
-                ax.set_ylabel(ROWS[m], color=INK, fontsize=8, rotation=0, ha="right", va="center")
-        axes[0][j].set_title(f"target NFE {nfe}", color=INK, fontsize=9, pad=4)
-    fig.suptitle(title, color=INK, fontsize=10)
-    fig.tight_layout()
-    fig.savefig(path.with_suffix(".png"), dpi=200)
-    fig.savefig(path.with_suffix(".pdf"))
-    plt.close(fig)
+                ax.set_ylabel(ROWS[m], fontsize=8, rotation=0, ha="right", va="center")
+        axes[0][j].set_title(f"target NFE {nfe}", fontsize=9, pad=4)
+    fig.suptitle(title, fontsize=10)
+    save_figure(fig, path)
 
 
 def main():
     args = parse_args()
+    import equinox as eqx
+    import jax
+    import jax.numpy as jnp
+
+    from bendflow.config import load_math_config
+    from bendflow.data import image_shape
+    from bendflow.networks import load_network
+    from bendflow.samplers import BendFlowEuler, ScheduleEuler, UniformEuler
+
     jax.config.update("jax_enable_x64", True)
+
     out = Path(args.out or f"results/sample_grids_{args.dataset}")
     out.mkdir(parents=True, exist_ok=True)
     settings_dir = Path(args.settings or f"results/schedule_baseline_{args.dataset}_n128")
@@ -129,7 +131,7 @@ def main():
                 cell = {"mean_nfe": float(k.mean()), "rms_err_mean": float(rms(s, ref).mean())}
                 panels[nfe][m] = {"samples": s, **cell}
                 table[nfe][m] = cell
-        plot(out / f"grid_{name}", f"{args.dataset}, {FIELD_LABELS[name]}: same noise under each sampler", panels, shape)
+        plot(out / f"grid_{name}", f"{args.dataset.replace('_', ' ')}, {FIELD_LABELS[name]}: same noise under each sampler", panels, shape)
         summary["models"][name] = table
         print(f"{name} done, {time.perf_counter() - start:.0f}s", flush=True)
 
