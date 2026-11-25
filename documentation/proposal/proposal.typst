@@ -1,0 +1,467 @@
+#let coolpurple = rgb("#7f65a0")
+#let lightpurple = rgb("#ede8f5")
+#let darktext = rgb("#1a1a2e")
+#let highlightpurple = rgb("#5a3e82")
+
+
+#set page(
+  paper: "presentation-16-9",
+  margin: 0pt,
+  fill: white,
+)
+
+#set text(
+  font: "Noto Sans",
+  size: 19pt,
+  fill: darktext,
+)
+
+#show math.equation: set text(font: "New Computer Modern Math")
+
+#set par(justify: false, leading: 0.6em)
+
+#set list(
+  marker: text(fill: coolpurple, size: 0.8em, baseline: -0.1em)[▶],
+  spacing: 0.9em,
+  body-indent: 0.6em,
+)
+
+
+
+// purple bold text, like \hl in the beamer deck
+#let hl(body) = text(fill: coolpurple, weight: "bold", body)
+
+// beamer-style block: purple title bar, light purple body
+#let pblock(title, body, height: auto) = block(
+  width: 100%,
+  radius: 4pt,
+  clip: true,
+  stack(
+    block(
+      width: 100%,
+      fill: coolpurple,
+      inset: (x: 12pt, y: 7pt),
+      text(fill: white, title),
+    ),
+    block(
+      width: 100%,
+      height: height,
+      fill: lightpurple,
+      inset: 12pt,
+      body,
+    ),
+  ),
+)
+
+// several blocks side by side; the grid gives all bodies the height of the tallest one
+#let pblock-row(..blocks) = {
+  let items = blocks.pos()
+
+  grid(
+    columns: items.len() * (1fr,),
+    column-gutter: 0.5cm,
+
+    ..items.map(((title, _)) => grid.cell(
+      fill: coolpurple,
+      inset: (x: 12pt, y: 7pt),
+      text(fill: white, title),
+    )),
+
+    ..items.map(((_, body)) => grid.cell(
+      fill: lightpurple,
+      inset: 12pt,
+      body,
+    )),
+  )
+}
+
+// rounded box with a single message, used for the take-home line of a slide
+#let callout(body) = align(center, block(
+  fill: lightpurple,
+  stroke: 1pt + coolpurple,
+  radius: 8pt,
+  inset: (x: 16pt, y: 11pt),
+  align(center, body),
+))
+
+// one slide: purple title bar on top, page number bottom right
+#let slide(title, body) = {
+  pagebreak(weak: true)
+
+  block(
+    width: 100%,
+    fill: coolpurple,
+    inset: (x: 1.1cm, y: 0.55cm),
+    text(fill: white, size: 24pt, title),
+  )
+
+  pad(x: 1.1cm, top: 0.5cm, body)
+
+  place(
+    bottom + right,
+    dx: -0.6cm,
+    dy: -0.4cm,
+    text(size: 12pt, context [
+      #counter(page).display() / #counter(page).final().first()
+    ]),
+  )
+}
+
+// straight arrow between two points given in cm
+#let arrow(a, b, color: highlightpurple, thickness: 1.6pt, head: 0.25) = {
+  let (ax, ay) = a
+  let (bx, by) = b
+
+  let len = calc.sqrt(calc.pow(bx - ax, 2) + calc.pow(by - ay, 2))
+  let (ux, uy) = ((bx - ax) / len, (by - ay) / len)
+  let (nx, ny) = (-uy, ux)
+  let (cx, cy) = (bx - head * ux, by - head * uy)
+
+  place(line(
+    start: (ax * 1cm, ay * 1cm),
+    end: (cx * 1cm, cy * 1cm),
+    stroke: thickness + color,
+  ))
+  place(polygon(
+    fill: color,
+    (bx * 1cm, by * 1cm),
+    ((cx + 0.45 * head * nx) * 1cm, (cy + 0.45 * head * ny) * 1cm),
+    ((cx - 0.45 * head * nx) * 1cm, (cy - 0.45 * head * ny) * 1cm),
+  ))
+}
+
+// filled dot at a point given in cm
+#let marker(p, color: darktext, r: 0.09) = place(
+  dx: (p.at(0) - r) * 1cm,
+  dy: (p.at(1) - r) * 1cm,
+  circle(radius: r * 1cm, fill: color),
+)
+
+// text label centred on a point given in cm
+#let label-at(p, body, size: 14pt) = context {
+  let content = text(size: size, body)
+  let s = measure(content)
+
+  place(
+    dx: p.at(0) * 1cm - s.width / 2,
+    dy: p.at(1) * 1cm - s.height / 2,
+    content,
+  )
+}
+
+
+
+// =================================================================
+// 1. title
+// =================================================================
+
+#align(center + horizon)[
+  #block(
+    fill: coolpurple,
+    radius: 8pt,
+    inset: (x: 28pt, y: 18pt),
+    width: 80%,
+  )[
+    #text(fill: white, size: 30pt)[BendFlow: Where Flow Matching Trajectories Bend]
+
+    #v(0.2em)
+
+    #text(fill: white, size: 18pt)[Project proposal, Visual Generative Models]
+  ]
+
+  #v(1.2em)
+
+  #text(fill: coolpurple, size: 20pt)[
+    Lado Turmanidze #h(2.5em) Geronimo Castaño
+  ]
+
+  #v(0.3em)
+
+  #text(fill: coolpurple, size: 15pt)[Universität des Saarlandes]
+
+  #v(0.8em)
+
+  #text(fill: coolpurple, size: 15pt)[December 2, 2026]
+]
+
+
+
+// =================================================================
+// 2. motivation
+// =================================================================
+
+#slide[Motivation: Sampling Is Following A Path][
+
+  #grid(
+    columns: (1.15fr, 1fr),
+    column-gutter: 1.2cm,
+
+    [
+      #set text(size: 18pt)
+
+      - #hl[Flow matching] generates an image by following a velocity field from noise ($t = 0$) to data ($t = 1$).
+
+      - #hl[In practice] the path is followed with a few Euler steps: look at the direction, walk straight, repeat.
+
+      - #hl[Where the path is straight], a large step loses nothing. #hl[Where it bends], a large step lands in the wrong place.
+    ],
+
+    box(width: 10cm, height: 5.8cm, {
+      // the true path
+      place(curve(
+        stroke: 3pt + coolpurple,
+        curve.move((0.3cm, 4.4cm)),
+        curve.cubic((4.3cm, 4.3cm), (4.7cm, 0.6cm), (8.3cm, 0.4cm)),
+      ))
+
+      // three large Euler steps
+      arrow((0.3, 4.4), (4.1, 4.25))
+      arrow((4.1, 4.25), (6.8, 2.9))
+      arrow((6.8, 2.9), (8.6, 1.95))
+
+      marker((0.3, 4.4))
+      marker((8.3, 0.4))
+      marker((8.6, 1.95), color: highlightpurple)
+
+      label-at((0.3, 4.95))[noise]
+      label-at((8.3, -0.15))[image]
+      label-at((9.45, 1.95))[Euler]
+      label-at((4.6, 5.55), size: 14pt)[#align(center)[straight: big steps are fine \ bend: big steps overshoot]]
+    }),
+  )
+
+  #v(0.6em)
+
+  #callout[
+    So the cost of sampling is decided by #hl[where the path bends]. \
+    If we knew that, we could put small steps there and large steps everywhere else.
+  ]
+]
+
+
+
+// =================================================================
+// 3. related work
+// =================================================================
+
+#slide[Motivation: How Is "Where Is It Hard?" Answered Today?][
+
+  #set text(size: 16pt)
+
+  #pblock-row(
+    (
+      [Hard timesteps],
+      [CSFlow and Stable Velocity (2026) find a #hl[range of timesteps] that is hard to learn or to follow, per dataset, and spend more training or more steps there.],
+    ),
+
+    (
+      [Curvature and the denoiser],
+      [Chen et al. (2023) and Rao et al. (2026) link the bending of a path to how fast the #hl[denoised prediction] changes, but give no closed form for that change.],
+    ),
+
+    (
+      [Adaptive step sizes],
+      [Jolicoeur-Martineau et al. (2021) adapt the step size from an error estimate that costs #hl[extra network evaluations] per step.],
+    ),
+  )
+
+  #v(0.6em)
+
+  #pblock[The question of this project][
+    For #hl[one sample], at #hl[one moment]: #emph[why] does its path bend, and can we read that off from quantities the sampler #hl[already computes]?
+  ]
+]
+
+
+
+// =================================================================
+// 4. proposed method: the idea
+// =================================================================
+
+#slide[Proposed Method: Difficulty Is Indecision][
+
+  #grid(
+    columns: (1.25fr, 1fr),
+    column-gutter: 1cm,
+
+    [
+      #set text(size: 18pt)
+
+      - At every noisy point the model implicitly answers: #hl[which training image did this come from?]
+
+      - The answer is a probability distribution over training images, the #hl[posterior].
+
+      - #hl[Claim:] the path bends while the posterior is still split between images that are far apart, and it is straight once it has #hl[committed] (put almost all its weight on one image).
+    ],
+
+    box(width: 9cm, height: 6.4cm, {
+      let x = (0.6, 2.9)
+      let imgs = ((5.6, 0.7), (5.6, 2.9), (5.6, 5.1))
+      let weights = ("0.45", "0.40", "0.15")
+      let widths = (3.6pt, 3.2pt, 1pt)
+
+      for i in range(3) {
+        arrow(x, (imgs.at(i).at(0) - 1.05, imgs.at(i).at(1)), color: coolpurple, thickness: widths.at(i), head: 0.3)
+      }
+
+      label-at((2.2, 1.45))[0.45]
+      label-at((2.6, 2.5))[0.40]
+      label-at((2.0, 4.3))[0.15]
+
+      place(dx: 0.25cm, dy: 2.55cm, circle(radius: 0.35cm, fill: coolpurple, align(center + horizon, text(fill: white, size: 15pt)[$x$])))
+
+      for (i, p) in imgs.enumerate() {
+        place(
+          dx: (p.at(0) - 1.05) * 1cm,
+          dy: (p.at(1) - 0.35) * 1cm,
+          box(
+            fill: lightpurple,
+            stroke: 1pt + coolpurple,
+            radius: 4pt,
+            inset: (x: 8pt, y: 5pt),
+            text(size: 14pt)[image #(i + 1)],
+          ),
+        )
+      }
+
+      label-at((3.4, 6.1))[undecided: the path is about to bend]
+    }),
+  )
+
+  #v(0.4em)
+
+  #pblock[Setting][
+    #set text(size: 16pt)
+
+    We treat the training set itself as the data distribution. Then the best possible flow matching field can be written down #hl[exactly], with no network, so statements can be #hl[proved] instead of only observed. It works for any path $x_t = alpha_t x_1 + sigma_t epsilon$.
+  ]
+]
+
+
+
+// =================================================================
+// 5. proposed method: theory
+// =================================================================
+
+#slide[Proposed Method: Measure The Indecision][
+
+  #set text(size: 17pt)
+
+  At a noisy point, the posterior has a #hl[mean] $m$ (the best guess of the clean image), a #hl[covariance] $C$ (how unsure it is) and a #hl[third moment] $kappa$ (how lopsided it is).
+
+  #v(0.3em)
+
+  - #hl[Bending, in closed form.] Beyond the curve of the noise schedule itself, a path bends only because its best guess moves, and
+
+    $ dot(m) = dot(gamma)_t (C hat(epsilon) - gamma_t kappa), $
+
+    with $hat(epsilon)$ the predicted noise and $gamma_t = alpha_t \/ sigma_t$ the signal-to-noise ratio.
+
+  - #hl[Only nearby images matter.] We bound $C$ and $kappa$ by how far apart the few training images with non-negligible weight are, so the bound is #hl[local] to each point.
+
+  #v(0.3em)
+
+  #callout[
+    Once the posterior has committed, $C = kappa = 0$: only the schedule's own curve is left, \
+    and on the linear path the path is a straight line.
+  ]
+]
+
+
+
+// =================================================================
+// 6. proposed method: sampler
+// =================================================================
+
+#slide[Proposed Method: A Sampler That Uses This, For Free][
+
+  #set text(size: 17pt)
+
+  - Every step already computes a guess of the clean image, $hat(m)_k$, from the network output.
+
+  - #hl[Free estimate:] the difference of two consecutive guesses estimates $dot(m)$, with #hl[no extra network evaluations],
+
+    $ hat(dot(m))_k = (hat(m)_k - hat(m)_(k - 1)) / h_(k - 1). $
+
+  - #hl[Step size:] choose $h_k$ so that every step makes the same local error $"tol"$,
+
+    $ h_k = sqrt((2 "tol") / (sigma_(t_k) dot(gamma)_(t_k) norm(hat(dot(m))_k))), quad "clipped to" [h_min, h_max]. $
+
+  #v(0.2em)
+
+  #pblock[In words][
+    #set text(size: 16pt)
+
+    Small steps where the guess changes fast, large steps where it stands still, #hl[separately for each sample]. On the linear path this is plain Euler with a smarter grid; on other paths it is DDIM with a smarter grid.
+  ]
+]
+
+
+
+// =================================================================
+// 7. datasets
+// =================================================================
+
+#slide[Datasets And Models][
+
+  #set text(size: 16pt)
+
+  #pblock-row(
+    (
+      [Images],
+      [#hl[MNIST], #hl[Fashion-MNIST] (60,000 images, $28 times 28$) and #hl[CIFAR-10] (50,000 images, $32 times 32 times 3$), scaled to $[-1, 1]$.],
+    ),
+
+    (
+      [Two kinds of field],
+      [The #hl[exact field] of the training set (no network), and small trained networks: a #hl[U-Net] and a #hl[DiT] per dataset.],
+    ),
+
+    (
+      [Two kinds of path],
+      [The #hl[linear path] $x_t = t x_1 + (1 - t) epsilon$, and a #hl[non-linear] one such as the cosine schedule.],
+    ),
+  )
+
+  #v(0.6em)
+
+  #callout[
+    Small datasets on purpose: the exact field needs the whole training set at every step, \
+    and our compute is limited.
+  ]
+]
+
+
+
+// =================================================================
+// 8. evaluation
+// =================================================================
+
+#slide[Evaluation][
+
+  #set text(size: 17pt)
+
+  - #hl[Are the formulas right?] Compare the closed form for $dot(m)$ with automatic differentiation of the exact field; report the relative error.
+
+  - #hl[How useful are the bounds?] Ratio of each bound to the true value along sample paths.
+
+  - #hl[Where does the path bend?] Check whether the bending peaks when the posterior commits, and whether trained networks bend where the exact field does.
+
+  - #hl[Does the sampler help?] At the #hl[same number of network evaluations] (5 to 40), compare its distance to a 1000-step reference with uniform steps and with one fixed schedule built from the average bending; show sample grids.
+
+  #v(0.3em)
+
+  #callout[
+    We measure the #hl[solver], not the model: the main metric is the error to the reference.
+  ]
+]
+
+
+
+// =================================================================
+// 9. questions
+// =================================================================
+
+#pagebreak(weak: true)
+
+#align(center + horizon, text(fill: coolpurple, size: 48pt, weight: "bold")[Questions?])

@@ -1,0 +1,684 @@
+// BendFlow: 10-minute presentation.
+// Compile from this folder with: typst compile --root ../.. presentation.typst presentation.pdf
+
+
+#let coolpurple = rgb("#7f65a0")
+#let lightpurple = rgb("#ede8f5")
+#let darktext = rgb("#1a1a2e")
+#let highlightpurple = rgb("#5a3e82")
+
+
+#set page(
+  paper: "presentation-16-9",
+  margin: 0pt,
+  fill: white,
+)
+
+#set text(
+  font: "Noto Sans",
+  size: 19pt,
+  fill: darktext,
+)
+
+#show math.equation: set text(font: "New Computer Modern Math")
+
+#set par(justify: false, leading: 0.6em)
+
+#set list(
+  marker: text(fill: coolpurple, size: 0.8em, baseline: -0.1em)[▶],
+  spacing: 0.9em,
+  body-indent: 0.6em,
+)
+
+
+
+// purple bold text, like \hl in the beamer deck
+#let hl(body) = text(fill: coolpurple, weight: "bold", body)
+
+// beamer-style block: purple title bar, light purple body
+#let pblock(title, body, height: auto) = block(
+  width: 100%,
+  radius: 4pt,
+  clip: true,
+  stack(
+    block(
+      width: 100%,
+      fill: coolpurple,
+      inset: (x: 12pt, y: 7pt),
+      text(fill: white, title),
+    ),
+    block(
+      width: 100%,
+      height: height,
+      fill: lightpurple,
+      inset: 12pt,
+      body,
+    ),
+  ),
+)
+
+// several blocks side by side; the grid gives all bodies the height of the tallest one
+#let pblock-row(..blocks) = {
+  let items = blocks.pos()
+
+  grid(
+    columns: items.len() * (1fr,),
+    column-gutter: 0.5cm,
+
+    ..items.map(((title, _)) => grid.cell(
+      fill: coolpurple,
+      inset: (x: 12pt, y: 7pt),
+      text(fill: white, title),
+    )),
+
+    ..items.map(((_, body)) => grid.cell(
+      fill: lightpurple,
+      inset: 12pt,
+      body,
+    )),
+  )
+}
+
+// rounded box with a single message, used for the take-home line of a slide
+#let callout(body) = align(center, block(
+  fill: lightpurple,
+  stroke: 1pt + coolpurple,
+  radius: 8pt,
+  inset: (x: 16pt, y: 11pt),
+  align(center, body),
+))
+
+// one slide: purple title bar on top, page number bottom right
+#let slide(title, body) = {
+  pagebreak(weak: true)
+
+  block(
+    width: 100%,
+    fill: coolpurple,
+    inset: (x: 1.1cm, y: 0.55cm),
+    text(fill: white, size: 24pt, title),
+  )
+
+  pad(x: 1.1cm, top: 0.5cm, body)
+
+  place(
+    bottom + right,
+    dx: -0.6cm,
+    dy: -0.4cm,
+    text(size: 12pt, context [
+      #counter(page).display() / #counter(page).final().first()
+    ]),
+  )
+}
+
+// straight arrow between two points given in cm
+#let arrow(a, b, color: highlightpurple, thickness: 1.6pt, head: 0.25) = {
+  let (ax, ay) = a
+  let (bx, by) = b
+
+  let len = calc.sqrt(calc.pow(bx - ax, 2) + calc.pow(by - ay, 2))
+  let (ux, uy) = ((bx - ax) / len, (by - ay) / len)
+  let (nx, ny) = (-uy, ux)
+  let (cx, cy) = (bx - head * ux, by - head * uy)
+
+  place(line(
+    start: (ax * 1cm, ay * 1cm),
+    end: (cx * 1cm, cy * 1cm),
+    stroke: thickness + color,
+  ))
+  place(polygon(
+    fill: color,
+    (bx * 1cm, by * 1cm),
+    ((cx + 0.45 * head * nx) * 1cm, (cy + 0.45 * head * ny) * 1cm),
+    ((cx - 0.45 * head * nx) * 1cm, (cy - 0.45 * head * ny) * 1cm),
+  ))
+}
+
+// filled dot at a point given in cm
+#let marker(p, color: darktext, r: 0.09) = place(
+  dx: (p.at(0) - r) * 1cm,
+  dy: (p.at(1) - r) * 1cm,
+  circle(radius: r * 1cm, fill: color),
+)
+
+// text label centred on a point given in cm
+#let label-at(p, body, size: 14pt) = context {
+  let content = text(size: size, body)
+  let s = measure(content)
+
+  place(
+    dx: p.at(0) * 1cm - s.width / 2,
+    dy: p.at(1) * 1cm - s.height / 2,
+    content,
+  )
+}
+
+
+// =================================================================
+// 1. title
+// =================================================================
+
+#align(center + horizon)[
+  #block(
+    fill: coolpurple,
+    radius: 8pt,
+    inset: (x: 28pt, y: 18pt),
+    width: 80%,
+  )[
+    #text(fill: white, size: 30pt)[BendFlow: Where Flow Matching Trajectories Bend]
+
+    #v(0.2em)
+
+    #text(fill: white, size: 18pt)[Project proposal, Visual Generative Models]
+  ]
+
+  #v(1.2em)
+
+  #text(fill: coolpurple, size: 20pt)[
+    Lado Turmanidze #h(2.5em) Geronimo Castaño
+  ]
+
+  #v(0.3em)
+
+  #text(fill: coolpurple, size: 15pt)[Universität des Saarlandes]
+
+  #v(0.8em)
+
+  #text(fill: coolpurple, size: 15pt)[December 2, 2026]
+]
+
+
+
+// =================================================================
+// 2. motivation
+// =================================================================
+
+#slide[Sampling Is Following A Path][
+
+  #grid(
+    columns: (1.15fr, 1fr),
+    column-gutter: 1.2cm,
+
+    [
+      #set text(size: 18pt)
+
+      - #hl[Flow matching] generates an image by following a velocity field from noise ($t = 0$) to data ($t = 1$).
+
+      - #hl[In practice] the path is followed with a few Euler steps: look at the direction, walk straight, repeat.
+
+      - #hl[Where the path is straight], a large step loses nothing. #hl[Where it bends], a large step lands in the wrong place.
+    ],
+
+    box(width: 10cm, height: 5.8cm, {
+      // the true path
+      place(curve(
+        stroke: 3pt + coolpurple,
+        curve.move((0.3cm, 4.4cm)),
+        curve.cubic((4.3cm, 4.3cm), (4.7cm, 0.6cm), (8.3cm, 0.4cm)),
+      ))
+
+      // three large Euler steps
+      arrow((0.3, 4.4), (4.1, 4.25))
+      arrow((4.1, 4.25), (6.8, 2.9))
+      arrow((6.8, 2.9), (8.6, 1.95))
+
+      marker((0.3, 4.4))
+      marker((8.3, 0.4))
+      marker((8.6, 1.95), color: highlightpurple)
+
+      label-at((0.3, 4.95))[noise]
+      label-at((8.3, -0.15))[image]
+      label-at((9.45, 1.95))[Euler]
+      label-at((4.6, 5.55), size: 14pt)[#align(center)[straight: big steps are fine \ bend: big steps overshoot]]
+    }),
+  )
+
+  #v(0.6em)
+
+  #callout[
+    So the cost of sampling is decided by #hl[where the path bends]. \
+    If we knew that, we could put small steps there and large steps everywhere else.
+  ]
+]
+
+
+
+// =================================================================
+// 3. how is it answered today
+// =================================================================
+
+#slide[How Is "Where Is It Hard?" Answered Today?][
+
+  #set text(size: 17pt)
+
+  #pblock[Current answers (e.g. CSFlow, Stable Velocity, 2026)][
+    Find a #hl[range of timesteps] where the field is hard to learn or to follow, for each dataset, and spend more training or more sampling steps there.
+  ]
+
+  #v(0.5em)
+
+  #pblock-row(
+    (
+      [What this does not say],
+      [
+        - #emph[why] these timesteps are hard
+
+        - anything about a #emph[single] sample: every sample gets the same schedule
+      ],
+    ),
+
+    (
+      [The question of this project],
+      [For #hl[one sample], at #hl[one moment]: what makes its path bend, and can we read that off from quantities the sampler already computes?],
+    ),
+  )
+]
+
+
+
+// =================================================================
+// 4. the idea
+// =================================================================
+
+#slide[The Idea: Difficulty Is Indecision][
+
+  #grid(
+    columns: (1.25fr, 1fr),
+    column-gutter: 1cm,
+
+    [
+      #set text(size: 18pt)
+
+      - At every noisy point the model implicitly answers: #hl[which training image did this come from?]
+
+      - The answer is a probability distribution over training images, the #hl[posterior].
+
+      - #hl[Claim:] the path bends while the posterior is still split between images that are far apart, and it is straight once it has #hl[committed] (put almost all its weight on one image).
+    ],
+
+    box(width: 9cm, height: 6.4cm, {
+      let x = (0.6, 2.9)
+      let imgs = ((5.6, 0.7), (5.6, 2.9), (5.6, 5.1))
+      let widths = (3.6pt, 3.2pt, 1pt)
+
+      for i in range(3) {
+        arrow(x, (imgs.at(i).at(0) - 1.05, imgs.at(i).at(1)), color: coolpurple, thickness: widths.at(i), head: 0.3)
+      }
+
+      label-at((2.2, 1.45))[0.45]
+      label-at((2.6, 2.5))[0.40]
+      label-at((2.0, 4.3))[0.15]
+
+      place(dx: 0.25cm, dy: 2.55cm, circle(radius: 0.35cm, fill: coolpurple, align(center + horizon, text(fill: white, size: 15pt)[$x$])))
+
+      for (i, p) in imgs.enumerate() {
+        place(
+          dx: (p.at(0) - 1.05) * 1cm,
+          dy: (p.at(1) - 0.35) * 1cm,
+          box(
+            fill: lightpurple,
+            stroke: 1pt + coolpurple,
+            radius: 4pt,
+            inset: (x: 8pt, y: 5pt),
+            text(size: 14pt)[image #(i + 1)],
+          ),
+        )
+      }
+
+      label-at((3.4, 6.1))[undecided: the path is about to bend]
+    }),
+  )
+
+  #v(0.4em)
+
+  #pblock[Setting][
+    #set text(size: 16pt)
+
+    We treat the training set itself as the data distribution. Then the best possible flow matching field can be written down exactly, with no network, so statements can be #hl[proved] instead of only observed. Theory: any path $x_t = alpha_t x_1 + sigma_t epsilon$; experiments: the linear path $alpha_t = t$, $sigma_t = 1 - t$.
+  ]
+]
+
+
+
+// =================================================================
+// 5. notation
+// =================================================================
+
+#slide[Notation: Three Numbers About The Posterior][
+
+  #set text(size: 17pt)
+
+  Training images $x^((1)), dots, x^((N)) in RR^d$, path $x_t = alpha_t x_1 + sigma_t epsilon$. At a noisy point $x$ and time $t$, image $i$ has posterior weight
+
+  $ w_i prop exp(-norm(x - alpha_t x^((i)))^2 / (2 sigma_t^2)) #h(2em) "(close to" x "means likely)." $
+
+  #set text(size: 15pt)
+
+  #pblock-row(
+    (
+      [Mean $m$],
+      [
+        $m = sum_i w_i x^((i))$
+
+        the current #hl[best guess] of the clean image (the "denoised prediction")
+      ],
+    ),
+
+    (
+      [Covariance $C$],
+      [
+        $C = sum_i w_i (x^((i)) - m)(dot.op)^top$
+
+        how #hl[unsure] the guess is; $0$ once the posterior has committed
+      ],
+    ),
+
+    (
+      [Third moment $kappa$],
+      [
+        $kappa = sum_i w_i norm(x^((i)) - m)^2 (dot.op)$
+
+        how #hl[lopsided] the uncertainty is; $0$ if it is symmetric
+      ],
+    ),
+  )
+
+  #v(0.3em)
+
+  #set text(size: 17pt)
+
+  The exact field mixes the two guesses: $u_t (x) = dot(alpha)_t m + dot(sigma)_t hat(epsilon)$, where $hat(epsilon) = (x - alpha_t m) / sigma_t$ is the predicted noise and $gamma_t = alpha_t \/ sigma_t$ the signal-to-noise ratio. Linear path: $u_t (x) = (m - x) / (1 - t)$.
+]
+
+
+
+// =================================================================
+// 6. result 1
+// =================================================================
+
+#slide[Result 1: A Closed Form For The Bending][
+
+  #set text(size: 17pt)
+
+  - #hl[Bending] splits into the schedule's own curve and the moving best guess (on the linear path the first part is $0$ and this is $dot.double(x) = dot(m) \/ (1 - t)$, Rao et al., 2026):
+
+    $ dot.double(x) = underbrace(dot.double(alpha)_t m + dot.double(sigma)_t hat(epsilon), "schedule") + underbrace(sigma_t dot(gamma)_t dot(m), "posterior"). $
+
+  - #hl[New:] how fast the best guess moves, in closed form, for any Gaussian path,
+
+    $ dot(m) = dot(gamma)_t (underbrace(C hat(epsilon), "spread") - gamma_t underbrace(kappa, "lopsidedness")), #h(2em) "linear path:" dot(m) = (C hat(epsilon)) / (1 - t)^2 - (t kappa) / (1 - t)^3. $
+
+  #pblock[In words][
+    #set text(size: 15pt)
+
+    Beyond the schedule, a path bends #hl[only] because the posterior is spread out ($C$) or lopsided ($kappa$). Once one image has all the weight, $C = kappa = 0$ and only the schedule's own curve is left; on the linear path the path is then a straight line and Euler is exact.
+  ]
+]
+
+
+
+// =================================================================
+// 7. result 2
+// =================================================================
+
+#slide[Result 2: Only Nearby Images Matter][
+
+  #set text(size: 17pt)
+
+  - Weights fall off exponentially with distance. The #hl[active set] $A$ keeps the images that are almost as close as the closest one; all others together carry weight at most $delta$ (we use $delta = 0.01$).
+
+  - With $D_A$ the diameter of the active set and $D$ that of the whole training set:
+
+    $ lambda_max (C) <= D_A^2 / 4 + delta D^2, #h(2em) norm(kappa) <= (D_A + delta D)^3 + delta D^3. $
+
+  #pblock[In words][
+    #set text(size: 15pt)
+
+    The bending at a point is limited by #hl[how far apart the candidate images are], not by a fixed range of timesteps. The bound on $C$ cannot be improved: two images at distance $D_A$ with equal weight reach it exactly. The same bound also says when nearby trajectories can separate at all: only while $lambda_max (C) > -dot(sigma)_t \/ (sigma_t gamma_t dot(gamma)_t)$, which is $(1 - t)^2 \/ t$ on the linear path, i.e. while the posterior is undecided.
+  ]
+]
+
+
+
+// =================================================================
+// 8. result 3
+// =================================================================
+
+#slide[Result 3: A Sampler That Uses This, For Free][
+
+  #set text(size: 16pt)
+
+  - Every step already computes a guess of the clean image $hat(m)_k$ and of the noise $hat(epsilon)_k$ from $x_k$ and the network output $v_k$. A #hl[DDIM step] keeps both fixed, $x_(k + 1) = alpha_(t_(k + 1)) hat(m)_k + sigma_(t_(k + 1)) hat(epsilon)_k$, so the schedule's curve costs nothing and only the moving guess makes an error, $(h^2 \/ 2) sigma_t dot(gamma)_t dot(m)$.
+
+  - #hl[Free estimate:] the difference of two consecutive guesses estimates $dot(m)$, with #hl[no extra network evaluations],
+
+    $ hat(dot(m))_k = (hat(m)_k - hat(m)_(k - 1)) / h_(k - 1). $
+
+  - #hl[Step size:] choose $h_k$ so that every step makes the same local error $"tol"$,
+
+    $ h_k = sqrt((2 "tol") / (sigma_(t_k) dot(gamma)_(t_k) norm(hat(dot(m))_k))), quad "clipped to" [h_min, h_max]. $
+
+  #pblock[In words][
+    #set text(size: 15pt)
+
+    Small steps where the guess changes fast (the path bends), large steps where it stands still, #hl[separately for each sample]. On the linear path, $hat(m)_k = x_k + (1 - t_k) v_k$ and the DDIM step is the Euler step.
+  ]
+]
+
+
+
+// =================================================================
+// 9. experiments
+// =================================================================
+
+#slide[Experiments][
+
+  #set text(size: 16pt)
+
+  #pblock-row(
+    (
+      [1. Exact field],
+      [
+        MNIST, Fashion-MNIST, CIFAR-10 (up to 60,000 images, $d = 3072$).
+
+        Are the formulas right? How loose are the bounds? Where does the path bend?
+      ],
+    ),
+
+    (
+      [2. Trained networks],
+      [
+        A U-Net (1M parameters) and a DiT (4M) per dataset, trained with flow matching.
+
+        Do real models bend where the exact field does?
+      ],
+    ),
+
+    (
+      [3. Sampling],
+      [
+        Uniform Euler against BendFlow at the #hl[same number of network evaluations] (NFE), on 128 samples.
+
+        Error = distance to a 1000-step reference.
+      ],
+    ),
+  )
+
+  #v(0.6em)
+
+  #set text(size: 17pt)
+
+  #hl[Check of the formulas:] closed forms and automatic differentiation agree to a relative error below $10^(-12)$ on all three datasets; the bounds were never violated. All experiments so far use the #hl[linear path], where the DDIM step is the Euler step.
+]
+
+
+
+// =================================================================
+// 10. exact field figure
+// =================================================================
+
+#slide[The Exact Field Bends When It Commits][
+
+  #align(center, image("/results/exact_field_cifar10/mdot_and_bound.png", width: 100%))
+
+  #v(-0.2em)
+
+  #pblock[How to read this (CIFAR-10, four sample paths, log scale)][
+    #set text(size: 14pt)
+
+    #hl[Blue]: how fast the best guess moves, $norm(dot(m))$, i.e. how much the path bends. #hl[Orange]: our bound on it. The blue bump at $t approx 0.13$ to $0.21$ is the moment the posterior commits to one image; afterwards $norm(dot(m))$ drops to $0$ and the path is straight. Across datasets, the peak coincides with commitment on 17 of 24 paths. The bound is always above the curve but 100 to 5000 times too large: it explains the shape, not the size.
+  ]
+]
+
+
+
+// =================================================================
+// 11. trained networks figure
+// =================================================================
+
+#slide[Trained Networks Bend Differently][
+
+  #align(center, image("/results/trained_networks_cifar10/mdot_networks.png", height: 7.3cm))
+
+  #v(-0.2em)
+
+  #pblock[How to read this (CIFAR-10, top U-Net, bottom DiT)][
+    #set text(size: 14pt)
+
+    #hl[Blue]: bending of the exact field. #hl[Solid orange]: true bending of the network. #hl[Dashed]: our free estimate. Networks have #hl[no sharp peak] and keep bending mildly until the end: they do not commit to a training image, which is good, since the exact field only reproduces training images. The #hl[dashed line follows the solid one], so the free estimate works on real networks.
+  ]
+]
+
+
+
+// =================================================================
+// 12. error vs nfe figure
+// =================================================================
+
+#slide[Fewer Errors At The Same Cost][
+
+  #align(center, image("/results/schedule_baseline_cifar10_n128/error_vs_nfe.png", height: 6.9cm))
+
+  #v(-0.2em)
+
+  #pblock[How to read this (CIFAR-10, log scales, lower is better)][
+    #set text(size: 14pt)
+
+    x: network evaluations per sample. y: distance to the 1000-step reference. #hl[Blue]: uniform Euler. #hl[Green]: BendFlow with settings tuned on separate samples. For both networks green is lowest everywhere, e.g. 0.125 instead of 0.172 at 10 evaluations. #hl[Orange], the untuned default, gets worse at 40: the settings matter. #hl[Yellow], one fixed schedule from the average bending, is best on the exact field.
+  ]
+]
+
+
+
+// =================================================================
+// 13. results table
+// =================================================================
+
+#slide[Results At A Glance][
+
+  #set text(size: 16pt)
+
+  How much smaller the error of tuned BendFlow is than that of uniform Euler with the same NFE ($-25%$: a quarter less error; $+3%$: slightly worse):
+
+  #v(0.2em)
+
+  #align(center, {
+    set text(size: 14pt)
+
+    table(
+      columns: 6,
+      align: (left, left, center, center, center, center),
+      stroke: none,
+      inset: (x: 12pt, y: 4pt),
+
+      table.hline(stroke: 1pt),
+      table.header([Dataset], [Network], [NFE 5], [NFE 10], [NFE 20], [NFE 40]),
+      table.hline(stroke: 0.5pt),
+
+      [MNIST], [U-Net], [$+3%$], [$-3%$], [$-9%$], [$-9%$],
+      [], [DiT], [$+3%$], [$-3%$], [$-9%$], [$-15%$],
+      [Fashion-MNIST], [U-Net], [$-25%$], [$-16%$], [$-13%$], [$-11%$],
+      [], [DiT], [$-25%$], [$-20%$], [$-18%$], [$-19%$],
+      [CIFAR-10], [U-Net], [$-29%$], [$-27%$], [$-19%$], [$-17%$],
+      [], [DiT], [$-30%$], [$-28%$], [$-24%$], [$-21%$],
+
+      table.hline(stroke: 1pt),
+    )
+  })
+
+  #v(0.2em)
+
+  - #hl[Biggest gains at few steps] and on the harder datasets.
+
+  - #hl[On MNIST] a single fixed schedule built from the average bending is as good or better.
+
+  - U-Net and DiT behave almost identically, although the DiT is four times larger.
+]
+
+
+
+// =================================================================
+// 14. sample grid
+// =================================================================
+
+#slide[What Does It Look Like?][
+
+  #align(center, image("/results/sample_grids_cifar10/grid_dit.png", height: 8.4cm))
+
+  #v(-0.2em)
+
+  #pblock[How to read this (CIFAR-10 DiT, same 8 noise vectors in every row)][
+    #set text(size: 14pt)
+
+    Top row: the 1000-step reference. Each other row: one sampler at 5, 10 and 20 evaluations, with its mean number of evaluations and error above the row. At 5 steps every sampler is blurry; the tuned BendFlow row is closest to the reference. At 20 steps all are close.
+  ]
+]
+
+
+
+// =================================================================
+// 15. takeaways
+// =================================================================
+
+#slide[Takeaways And Limits][
+
+  #set text(size: 16pt)
+
+  #pblock-row(
+    (
+      [What we learned],
+      [
+        - Bending has a closed form in terms of the posterior's spread and lopsidedness, for any Gaussian path.
+
+        - The exact field bends mostly when it commits to a training image.
+
+        - Real networks bend more smoothly, but the free estimate still tracks them.
+
+        - Curvature-based steps cut the error by up to 30% at the same cost, once tuned.
+      ],
+    ),
+
+    (
+      [What we did not show],
+      [
+        - The bounds on $kappa$ and $dot(m)$ are too loose to use as numbers.
+
+        - Default settings can lose to uniform Euler; tuning is needed.
+
+        - Experiments only on the linear path; small networks, 128 samples, one draw of noise.
+
+        - Error to a reference, not sample quality.
+      ],
+    ),
+  )
+]
+
+
+
+// =================================================================
+// 16. questions
+// =================================================================
+
+#pagebreak(weak: true)
+
+#align(center + horizon, text(fill: coolpurple, size: 48pt, weight: "bold")[Questions?])

@@ -44,7 +44,7 @@
 
 \title{BendFlow: Where Flow Matching Trajectories Bend}
 \subtitle{Project proposal, Visual Generative Models}
-\author{Lado Turmanidze}
+\author{Lado Turmanidze \and Geronimo Castaño}
 \institute{\small{Universit\"at des Saarlandes}}
 \date{December 2, 2026}
 
@@ -142,17 +142,17 @@
 				\end{tikzpicture}
 			\end{column}
 		\end{columns}
-		\vspace{0.6em}
+		\vspace{0.1em}
 		\begin{block}{Setting}
-			\small We treat the training set itself as the data distribution. Then the best possible flow matching field can be written down exactly, with no network, so statements can be \hl{proved} instead of only observed. Everything is for the linear path $x_t = t\,x_1 + (1 - t)\,\varepsilon$.
+			\small We treat the training set itself as the data distribution. Then the best possible flow matching field can be written down exactly, with no network, so statements can be \hl{proved} instead of only observed. Theory: any path $x_t = \alpha_t\,x_1 + \sigma_t\,\varepsilon$; experiments: the linear path $\alpha_t = t$, $\sigma_t = 1 - t$.
 		\end{block}
 	\end{frame}
 
 	\begin{frame}{Notation: Three Numbers About The Posterior}
 		\small
-		Training images $\xn{1}, \dots, \xn{N} \in \R^d$. At a noisy point $x$ and time $t$, image $i$ has posterior weight
+		Training images $\xn{1}, \dots, \xn{N} \in \R^d$, path $x_t = \alpha_t\,x_1 + \sigma_t\,\varepsilon$. At a noisy point $x$ and time $t$, image $i$ has posterior weight
 		$$
-			w_i \propto \exp\!\Big(-\frac{\|x - t\,\xn{i}\|^2}{2(1 - t)^2}\Big) \qquad \text{(close to $x$ means likely)}.
+			w_i \propto \exp\!\Big(-\frac{\|x - \alpha_t\,\xn{i}\|^2}{2\sigma_t^2}\Big) \qquad \text{(close to $x$ means likely)}.
 		$$
 		\vspace{-0.6em}
 		\begin{columns}[onlytextwidth, T]
@@ -185,20 +185,20 @@
 			\end{column}
 		\end{columns}
 		\vspace{0.3em}
-		The exact field points to the best guess: $u_t(x) = \frac{m - x}{1 - t}$, and $\eps = \frac{x - t\,m}{1 - t}$ is the predicted noise.
+		The exact field mixes the two guesses: $u_t(x) = \dot\alpha_t\,m + \dot\sigma_t\,\eps$, where $\eps = \frac{x - \alpha_t m}{\sigma_t}$ is the predicted noise and $\gamma_t = \alpha_t / \sigma_t$ the signal-to-noise ratio. Linear path: $u_t(x) = \frac{m - x}{1 - t}$.
 	\end{frame}
 
 	\begin{frame}{Result 1: A Closed Form For The Bending}
 		\small
 		\begin{itemize}
-			\item \hl{Known} (Rao et al., 2026): a path bends exactly when its best guess moves,
-			$$ \ddot x = \frac{\dot m}{1 - t}. $$
-			\item \hl{New:} how fast the best guess moves, in closed form,
-			$$ \dot m = \underbrace{\frac{C\,\eps}{(1 - t)^2}}_{\text{spread}} - \underbrace{\frac{t\,\kappa}{(1 - t)^3}}_{\text{lopsidedness}}. $$
+			\item \hl{Bending} splits into the schedule's own curve and the moving best guess (on the linear path the first part is $0$ and this is $\ddot x = \frac{\dot m}{1 - t}$, Rao et al., 2026):
+			$$ \ddot x = \underbrace{\ddot\alpha_t\,m + \ddot\sigma_t\,\eps}_{\text{schedule}} + \underbrace{\sigma_t\dot\gamma_t\,\dot m}_{\text{posterior}}. $$
+			\item \hl{New:} how fast the best guess moves, in closed form, for any Gaussian path,
+			$$ \dot m = \dot\gamma_t\,\big(\underbrace{C\,\eps}_{\text{spread}} - \gamma_t \underbrace{\kappa}_{\text{lopsidedness}}\big), \qquad \text{linear path: } \dot m = \frac{C\,\eps}{(1 - t)^2} - \frac{t\,\kappa}{(1 - t)^3}. $$
 		\end{itemize}
 		\vspace{-0.4em}
 		\begin{block}{In words}
-			\footnotesize A path bends \hl{only} because the posterior is spread out ($C$) or lopsided ($\kappa$). Once one image has all the weight, $C = \kappa = 0$, the path is a straight line and Euler is exact. One Euler step of size $h$ makes the error $\frac{h^2}{2(1 - t)}\,\dot m$, so $\dot m$ tells us directly where large steps are safe.
+			\footnotesize Beyond the schedule, a path bends \hl{only} because the posterior is spread out ($C$) or lopsided ($\kappa$). Once one image has all the weight, $C = \kappa = 0$ and only the schedule's own curve is left; on the linear path the path is then a straight line and Euler is exact.
 		\end{block}
 	\end{frame}
 
@@ -210,21 +210,21 @@
 			$$ \lambda_{\max}(C) \le \frac{D_A^2}{4} + \delta D^2, \qquad \|\kappa\| \le (D_A + \delta D)^3 + \delta D^3 . $$
 		\end{itemize}
 		\begin{block}{In words}
-			\footnotesize The bending at a point is limited by \hl{how far apart the candidate images are}, not by a fixed range of timesteps. The bound on $C$ cannot be improved: two images at distance $D_A$ with equal weight reach it exactly. The same bound also says when nearby trajectories can separate at all: only while $\lambda_{\max}(C) > (1 - t)^2/t$, i.e.\ while the posterior is undecided.
+			\footnotesize The bending at a point is limited by \hl{how far apart the candidate images are}, not by a fixed range of timesteps. The bound on $C$ cannot be improved: two images at distance $D_A$ with equal weight reach it exactly. The same bound also says when nearby trajectories can separate at all: only while $\lambda_{\max}(C) > -\dot\sigma_t / (\sigma_t\gamma_t\dot\gamma_t)$, which is $(1 - t)^2/t$ on the linear path, i.e.\ while the posterior is undecided.
 		\end{block}
 	\end{frame}
 
 	\begin{frame}{Result 3: A Sampler That Uses This, For Free}
 		\small
 		\begin{itemize}
-			\item Every Euler step already computes a guess of the clean image, $\hat x_1^{(k)} = x_k + (1 - t_k)\,v_k$.
+			\item Every step already computes a guess of the clean image $\hat m_k$ and of the noise $\eps_k$ from $x_k$ and the network output $v_k$. A \hl{DDIM step} keeps both fixed, $x_{k+1} = \alpha_{t_{k+1}}\hat m_k + \sigma_{t_{k+1}}\eps_k$, so the schedule's curve costs nothing and only the moving guess makes an error, $\frac{h^2}{2}\,\sigma_t\dot\gamma_t\,\dot m$.
 			\item \hl{Free estimate:} the difference of two consecutive guesses estimates $\dot m$, with \hl{no extra network evaluations},
-			$$ \widehat{\dot m}_k = \frac{\hat x_1^{(k)} - \hat x_1^{(k - 1)}}{h_{k - 1}}. $$
+			$$ \widehat{\dot m}_k = \frac{\hat m_k - \hat m_{k - 1}}{h_{k - 1}}. $$
 			\item \hl{Step size:} choose $h_k$ so that every step makes the same local error $\mathrm{tol}$,
-			$$ h_k = \sqrt{\frac{2(1 - t_k)\,\mathrm{tol}}{\|\widehat{\dot m}_k\|}}, \quad \text{clipped to } [h_{\min}, h_{\max}]. $$
+			$$ h_k = \sqrt{\frac{2\,\mathrm{tol}}{\sigma_{t_k}\dot\gamma_{t_k}\,\|\widehat{\dot m}_k\|}}, \quad \text{clipped to } [h_{\min}, h_{\max}]. $$
 		\end{itemize}
 		\begin{block}{In words}
-			\footnotesize Small steps where the guess changes fast (the path bends), large steps where it stands still (the path is straight), \hl{separately for each sample}.
+			\footnotesize Small steps where the guess changes fast (the path bends), large steps where it stands still, \hl{separately for each sample}. On the linear path, $\hat m_k = x_k + (1 - t_k)\,v_k$ and the DDIM step is the Euler step.
 		\end{block}
 	\end{frame}
 
@@ -259,7 +259,7 @@
 			\end{column}
 		\end{columns}
 		\vspace{0.4em}
-		\small \hl{Check of the formulas:} closed forms and automatic differentiation agree to a relative error below $10^{-12}$ on all three datasets; the bounds were never violated.
+		\small \hl{Check of the formulas:} closed forms and automatic differentiation agree to a relative error below $10^{-12}$ on all three datasets; the bounds were never violated. All experiments so far use the \hl{linear path}, where the DDIM step is the Euler step.
 	\end{frame}
 
 	\begin{frame}{The Exact Field Bends When It Commits}
@@ -332,7 +332,7 @@
 					\footnotesize
 					\begin{minipage}[t][4.0cm][t]{\linewidth}
 						\begin{itemize}
-							\item Bending has a closed form in terms of the posterior's spread and lopsidedness.
+							\item Bending has a closed form in terms of the posterior's spread and lopsidedness, for any Gaussian path.
 							\item The exact field bends mostly when it commits to a training image.
 							\item Real networks bend more smoothly, but the free estimate still tracks them.
 							\item Curvature-based steps cut the error by up to $30\%$ at the same cost, once tuned.
@@ -347,7 +347,7 @@
 						\begin{itemize}
 							\item The bounds on $\kappa$ and $\dot m$ are too loose to use as numbers.
 							\item Default settings can lose to uniform Euler; tuning is needed.
-							\item Only the linear path, small networks, $128$ samples, one draw of noise.
+							\item Experiments only on the linear path; small networks, $128$ samples, one draw of noise.
 							\item Error to a reference, not sample quality.
 						\end{itemize}
 					\end{minipage}
