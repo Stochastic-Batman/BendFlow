@@ -151,18 +151,18 @@ The discretisation error of a flow matching sampler is governed by how much its 
 
 A flow matching model @lipman2023flow generates an image by integrating an ordinary differential equation $dot(x) = u_t (x)$ from noise at $t = 0$ to data at $t = 1$. Where the path is straight, large steps are fine; where it bends sharply, large steps introduce error. Recent work locates the hard part in a range of timesteps and then spends more training or more sampling steps there @csflow @stablevelocity.
 
-Instead of a result of the form "between timesteps $0.3$ and $0.4$ the field changes fastest", we would like the difficulty to depend on the field and on the neighbourhood of the current point. Our starting observation is that at every noisy point the model implicitly has to decide which training image the point came from. The answer is a posterior distribution over training images, and we argue that difficulty is uncertainty: the path is hard exactly while the posterior is undecided between several training images that are far apart.
+Instead of a result of the form "between timesteps $0.3$ and $0.4$ the field changes fastest", we would like the difficulty to depend on the field and on the neighbourhood of the current point. Our starting observation is that at every noisy point the model implicitly has to decide which training image the point came from. We argue that a path can only bend while this posterior is undecided between training images that are far apart; once it commits to one image, the bending stops, apart from the schedule's own curve.
 
 *Contributions.*
 - Starting from the known identities for the spatial Jacobian, the divergence and the trajectory acceleration, which we restate in one notation (@sec:known), we derive a closed form for the rate of change $dot(m)$ of the denoised prediction along a trajectory of a general Gaussian path in terms of the posterior covariance, the third moment and the SNR (@thm:mdot). #citet(<tang2026wasserstein>) write the partial time derivative of the posterior mean as a posterior covariance for variance-preserving paths; to our knowledge, no earlier work reduces the derivative along a trajectory to $C$ and $kappa$.
-- We bound the bending by the diameter of an active set of training images (@thm:local); the bound on the covariance cannot be improved.
-- We derive a curvature-adaptive step size for the Euler sampler together with an estimator of $dot(m)$ that costs no extra network evaluations (@sec:sampler).
+- We bound the bending by the diameter of an active set of training images (@thm:local); the $1/4 D_A^2$ bound on the covariance is tight.
+- We derive a curvature-adaptive step size for deterministic DDIM, which reduces to Euler on a linear path. Together with a sampler based on an estimator of $dot(m)$ that costs no extra network evaluations (@sec:sampler).
 
 The first two items are statements about the exact field of a finite training set. Whether trained networks follow them is an empirical question, which @sec:experiments addresses.
 
 = Setup and notation <sec:setup>
 
-Let $x^((1)), dots, x^((N)) in RR^d$ be the training set and let the path be $x_t = alpha_t x_1 + sigma_t epsilon$ with $epsilon tilde.op cal(N)(0, I)$. We treat the training set as the data distribution, so the marginal path is
+Let $cal(X) = (x^((1)), dots, x^((N)))$ be the training set in $RR^d$ and let the path be $x_t = alpha_t x_1 + sigma_t epsilon$ with $epsilon tilde.op cal(N)(0, I)$ independent of $x_1$. We treat the training set as the data distribution, so the marginal path is
 $ p_t (x) = 1/N sum_(i = 1)^N cal(N)(x; alpha_t x^((i)), sigma_t^2 I). $
 Let
 $ w_i (x, t) = (exp(-||x - alpha_t x^((i))||^2 \/ 2sigma_t^2)) / (sum_j exp(-||x - alpha_t x^((j))||^2 \/ 2sigma_t^2)) $ <eq:w>
@@ -173,7 +173,7 @@ $ <eq:moments>
 $ 
 hat(epsilon) = (x - alpha_t m)/sigma_t, wide u_t (x) = dot(alpha)_t m + dot(sigma)_t hat(epsilon).
 $ <eq:u>
-We write $gamma_t = alpha_t \/ sigma_t$ for the signal-to-noise ratio (SNR), so that $dot(gamma)_t = (dot(alpha)_t sigma_t - alpha_t dot(sigma)_t) \/ sigma_t^2$. We assume that $alpha_t$ and $sigma_t$ are differentiable, that $alpha_0 = 0$ and $sigma_0 = 1$ (pure noise at $t = 0$), that $alpha_1 = 1$ and $sigma_1 = 0$ (data at $t = 1$), that $sigma_t > 0$ for $t < 1$, and that the SNR increases, $dot(gamma)_t > 0$. Then $gamma_t > 0$ and $gamma_t dot(gamma)_t > 0$ for $t in (0, 1)$.
+We write $gamma_t = alpha_t \/ sigma_t$ for the signal-to-noise ratio (SNR), so that $dot(gamma)_t = (dot(alpha)_t sigma_t - alpha_t dot(sigma)_t) \/ sigma_t^2$. We assume that $alpha$ and $sigma$ are continuous on $[0, 1]$ and twice continuously differentiable on $[0, 1)$, with right derivatives at $t = 0$. We assume $alpha_t > 0$ for $0 < t < 1$ and $sigma_t > 0$ and $dot(gamma)_t > 0$ for $0 <= t < 1$. At the clean endpoint, $alpha_1 = 1$ and $sigma_1 = 0$.
 
 Here $m$, $C$ and $kappa$ are the first three moments of the posterior: its mean, spread and asymmetry. The mean $m$ is the average guess of the clean image. The covariance $C$ describes how uncertain that guess is, and it is $0$ when we are $100%$ sure. The third moment $kappa$ describes the asymmetry of the posterior and is $0$ when the posterior is symmetric. We will need $C$ when we differentiate $m$ with respect to space and $kappa$ when we differentiate it along a trajectory.
 
@@ -195,9 +195,9 @@ This is the second-order Tweedie formula @efron2011tweedie @manor2024posterior. 
 $ mu = gamma_t dot(gamma)_t lambda + (dot(sigma)_t)/(sigma_t). $
 As $lambda in [0, lambda_max]$ and $mu$ increases with $lambda$ (because $gamma_t dot(gamma)_t > 0$), the eigenvalues of $nabla_x u_t$ lie in
 $ [(dot(sigma)_t)/(sigma_t), thick gamma_t dot(gamma)_t lambda_max (C) + (dot(sigma)_t)/(sigma_t)]. $ <eq:eigrange>
-If $mu < 0$, trajectories contract in that direction, and when $C = 0$ everything is pulled onto one image at rate $abs(dot(sigma)_t) \/ sigma_t$. If $mu > 0$, trajectories separate. This only happens when
+If $mu < 0$, nearby trajectories contract in that direction. When $C = 0$ and $dot(sigma)_t < 0$, they contract in every direction at relative rate $-dot(sigma)_t \/ sigma_t$. Some direction separates if and only if
 $ lambda_max (C) > tau_t, wide tau_t := -(dot(sigma)_t)/(sigma_t gamma_t dot(gamma)_t), $ <eq:tau>
-that is, while the sample is still "choosing" between images that are far apart. For the linear path, $tau_t = (1 - t)^2 \/ t$. @app:eig proves these statements and makes the last one precise: trajectories can only separate while $1 - max_i w_i > tau_t \/ D^2$, where $D$ is the diameter of the training set.
+When $dot(sigma)_t < 0$, separation requires enough posterior spread to overcome contraction due to the schedule. For the linear path, $tau_t = (1 - t)^2 \/ t$. @app:eig shows that if the training-set diameter $D$ is positive, separation requires $1 - max_i w_i > tau_t \/ D^2$.
 
 Since $C$ is symmetric, $nabla_x u_t$ is symmetric, so locally the field only stretches or compresses along orthogonal axes (the eigenvectors of $C$) and never rotates. The eigenvalue map, the range @eq:eigrange and this last statement are also shown in @app:eig.
 
@@ -208,7 +208,7 @@ where the second identity is the continuity equation along a trajectory. Solved 
 Subtracting the two forms of the field in @eq:u-x gives $u_t (x | x^((i))) - u_t (x) = sigma_t dot(gamma)_t (x^((i)) - m)$, so the variance of the training target at $x$ is
 $ V_t (x) = sum_i w_i norm(u_t (x | x^((i))) - u_t (x))^2 = sigma_t^2 dot(gamma)_t^2 tr(C), $
 and substituting gives
-$ nabla dot.op u_t = gamma_t/(sigma_t^2 dot(gamma)_t) V_t + d (dot(sigma)_t)/(sigma_t), wide (d)/(d t) log p_t (x_t) = d (abs(dot(sigma)_t))/(sigma_t) - gamma_t/(sigma_t^2 dot(gamma)_t) V_t (x_t). $ <eq:div>
+$ nabla dot.op u_t = gamma_t/(sigma_t^2 dot(gamma)_t) V_t + d (dot(sigma)_t)/(sigma_t), wide (d)/(d t) log p_t (x_t) = -d (dot(sigma)_t)/(sigma_t) - gamma_t/(sigma_t^2 dot(gamma)_t) V_t (x_t). $ <eq:div>
 For the linear path these are $nabla dot.op u_t = (t V_t - d) \/ (1 - t)$ and $(d)/(d t) log p_t (x_t) = (d - t V_t (x_t)) \/ (1 - t)$. So the field contracts volume (density rises along the trajectory) unless the training targets at $x$ disagree strongly. $V_t$ is the velocity variance studied by #citet(<stablevelocity>).
 
 *Acceleration.* For the variance-exploding path, #citet(<chen2023geometric>) (Proposition 3) show that the curvature of a trajectory is set by the rate of change of the denoiser. For the linear path, #citet(<rao2026geometry>) (Proposition A.1, Eq. 18) show, in our notation,
@@ -243,12 +243,12 @@ Computing $dot(g)_i$ gives the linear coefficient $b = (dot(alpha)_t x + alpha_t
 ]
 
 #corollary(note: [Euler's error])[
-Since $u = dot(x)$, Taylor's theorem gives $x(t + h) = x + h u + h^2/2 dot.double(x) + O(h^3)$. An Euler step keeps only $x + h u$, so by @eq:acc-general its local error is
-$ x(t + h) - (x + h u) = h^2/2 (dot.double(alpha)_t m + dot.double(sigma)_t hat(epsilon) + sigma_t dot(gamma)_t dot(m)) + O(h^3). $ <eq:euler>
+Since $u = dot(x)$, Taylor's theorem gives $x(t + h) = x + h u + h^2/2 dot.double(x) + o(h^2)$. An Euler step keeps only $x + h u$, so by @eq:acc-general its local error is
+$ x(t + h) - (x + h u) = h^2/2 (dot.double(alpha)_t m + dot.double(sigma)_t hat(epsilon) + sigma_t dot(gamma)_t dot(m)) + o(h^2). $ <eq:euler>
 For the linear path the schedule term vanishes and the local error is $h^2 \/ (2(1 - t)) thin dot(m) + O(h^3)$.
 ] <cor:euler>
 
-*Interpretation of the results.* A trajectory curves only through the spread ($C$) and the asymmetry ($kappa$) of the posterior over training images. If one image has all the weight, then $C = 0$ and $kappa = 0$, so $dot(m) = 0$: only the schedule term $dot.double(alpha)_t m + dot.double(sigma)_t hat(epsilon)$ remains. For the linear path, the trajectory is a straight line and Euler is exact. That agrees with the zero-baseline result of #citet(<rao2026geometry>). If the posterior is symmetric about $m$, then $kappa = 0$ and only the $C hat(epsilon)$ term remains. For exactly two images with equal weights that term vanishes too, because then $C = Delta^2/4 e e^top$ with $e dot.op hat(epsilon) = 0$; the bending occurs next to the symmetric point, not at it.
+*Interpretation of the results.* The posterior-dependent part of the acceleration is determined by the spread $C$ and the asymmetry $kappa$ of the posterior. If one image has all the weight, then $C = 0$ and $kappa = 0$, so $dot(m) = 0$: only the schedule term $dot.double(alpha)_t m + dot.double(sigma)_t hat(epsilon)$ remains. For the linear path, the trajectory is a straight line and Euler is exact. That agrees with the zero-baseline result of #citet(<rao2026geometry>). If the posterior is symmetric about $m$, then $kappa = 0$ and only the $C hat(epsilon)$ term remains. For exactly two images with equal weights that term vanishes too, because then $C = Delta^2/4 e e^top$ with $e dot.op hat(epsilon) = 0$; the bending occurs next to the symmetric point, not at it.
 
 = Local bounds <sec:bounds>
 
@@ -261,7 +261,7 @@ $ A = {i : g_i >= g_(i^star) - log N/delta}. $ <eq:active>
 
 Geometrically, the active points are those almost as close to the rescaled point $x \/ alpha_t$ as the nearest point: $i in A$ if and only if
 $ ||x\/alpha_t - x^((i))||^2 <= ||x\/alpha_t - x^((i^star))||^2 + 2 / gamma_t^2 log N/delta . $
-This follows by writing $g_i$ in terms of $x \/ alpha_t$ (@app:active). The allowed slack shrinks to zero as $t -> 1$. Two diameters are used in what follows,
+This follows by writing $g_i$ in terms of $x \/ alpha_t$ (@app:active). At the clean endpoint, $gamma_t -> infinity$ as $t -> 1$, so the allowed slack shrinks to zero. Two diameters are used in what follows,
 $ D_A = max_(i, j in A) ||x^((i)) - x^((j))|| wide "and" wide D = max_(i, j) ||x^((i)) - x^((j))||. $
 
 #theorem[
@@ -274,7 +274,7 @@ and $||dot.double(x)|| <= ||dot.double(alpha)_t m + dot.double(sigma)_t hat(epsi
 
 The last inequality follows from @eq:acc-general and the triangle inequality. For the linear path its first term vanishes and it reads $||dot.double(x)|| = ||dot(m)|| \/ (1 - t)$.
 
-The proofs are in @app:bounds. The bound depends on $x$ and $t$ only through the active set, which makes it a local, data-dependent statement. Inserting @eq:lam into the eigenvalue range @eq:eigrange gives
+The proofs are in @app:bounds. The bound depends on $C$ and $kappa$ depend on $x$ and $t$ only through the active set, which makes it a local, data-dependent statement. Inserting @eq:lam into the eigenvalue range @eq:eigrange gives
 $ lambda_max (nabla_x u_t) <= gamma_t dot(gamma)_t (D_A^2/4 + delta D^2) + (dot(sigma)_t)/(sigma_t). $ <eq:lamjac>
 
 *Tightness.* Take $x^((1)), x^((2))$ with $||x^((1)) - x^((2))|| = Delta$ and $x = alpha_t dot.op (x^((1)) + x^((2)))/2$. Both are equally far from $x \/ alpha_t$, so $w_1 = w_2 = 1/2$, both are active, and $D_A = Delta$. Along $e = (x^((1)) - x^((2)))/Delta$ we get $e^top C e = 1/2 (Delta/2)^2 + 1/2 (Delta/2)^2 = Delta^2/4$, so $D_A^2/4$ cannot be improved.
@@ -287,7 +287,7 @@ We know how much a trajectory bends ($dot.double(x) = dot.double(alpha)_t m + do
 
 *The DDIM step*. By @cor:euler, an Euler step $x + h u_t (x)$ has a local error of 
 $
-h^2 / 2dot.double(x) + O(h^3) = h^2/2 (dot.double(alpha)_t m + dot.double(sigma)_t hat(epsilon) + sigma_t dot(gamma)_t dot(m)) + O(h^3).
+h^2/2 thin dot.double(x) + o(h^2) = h^2/2 (dot.double(alpha)_t m + dot.double(sigma)_t hat(epsilon) + sigma_t dot(gamma)_t dot(m)) + o(h^2).
 $
 
 The first two terms come from the schedule. They are the acceleration of the conditional path $alpha_t m + sigma_t hat(epsilon)$ with both estimates held fixed.  Unless the schedule is linear, these terms are nonzero even if the posterior has committed (i.e. $dot(m) = 0$). Deriving a step rule built on this error would shrink the step size where the data poses no difficulty. DDIM #citet(<song2021ddim>) avoids this. At any step $t_k$, the network output $v_k approx u_(t_k)(x_k)$ determines the estimate $hat(m)_k$ of the clean image and the estimate $hat(epsilon)_k$ of the noise applied. By @eq:u:
@@ -313,12 +313,12 @@ This is the exact solution of $dot(x) = u_t (x)$ when $m$ is frozen at $hat(m)_k
 *Its local error*. The DDIM step only errs because $m$ moves during the step:
 
 $
-  x(t+h) - x^"DDIM" = h^2 / 2 sigma_t dot(gamma)_t dot(m) + O(h^3).
+  x(t+h) - x^"DDIM" = h^2 / 2 sigma_t dot(gamma)_t dot(m) + o(h^2).
 $ <eq:ddim-error>
 
 DDIM is the first-order member of the exponential integrators of #citet(<lu2022dpmsolverpp>), and @eq:ddim-error is the leading error term of their expansion (Eq. 9), written in $t$ instead of $log gamma_t$; @app:ddim gives a direct proof. Compared with @cor:euler, the schedule term is gone. For the linear path, $sigma_t dot(gamma)_t = 1 / (1-t)$ and this is the Euler error.
 
-*Choosing the step size.* With equal steps $h$, the local error is proportional to $sigma_t dot(gamma)_t ||dot(m)||$. It is large where the posterior is undecided and almost zero once the posterior has committed, so a uniform grid spends evaluations where they achieve nothing. Classical step-size control @hairer1993ode lets every step make the same error, by fixing a tolerance $"tol" > 0$ and requiring
+*Choosing the step size.* For a fixed step size $h$, the leading local error norm is proportional to $sigma_t dot(gamma)_t ||dot(m)||$. Following classical step-size control @hairer1993ode, we fix a tolerance $"tol" > 0$ and choose $h$ to satisfy
 $ h^2/2 sigma_t dot(gamma)_t ||dot(m)|| = "tol" quad <==> quad h = sqrt((2 "tol")/(sigma_t dot(gamma)_t ||dot(m)||)), $ <eq:h>
 so steps become small where the trajectory bends and large where it is straight, for each sample individually. Adaptive step sizes for diffusion sampling were proposed before by #citet(<jolicoeur2021gotta>); what is new here is the closed form of the quantity the rule measures.
 
@@ -329,31 +329,32 @@ $ hat(dot(m))_k = (hat(m)_k - hat(m)_(k - 1))/h_(k - 1). $ <eq:est> #citet(<chen
 
 The proof is in @app:est. The estimate describes time $t_(k - 1)$ but is used to choose the step at $t_k$. Since $dot(m) (t_k) = dot(m) (t_(k - 1)) + O(h)$, this one-step lag costs another $O(h)$ and does not change the order. For a trained network the estimate additionally carries the network's own error $v_theta - u$, which we can only measure empirically.
 
-*Resulting sampler.* @alg:bendflow states the sampler. There is no previous prediction at $k = 0$, so $h_0$ is a fixed value. When the posterior has committed (one training image carries almost all the weight), $dot(m) -> 0$ and the rule would give $h -> infinity$, so $h_max$ and the remaining time prevent overshooting $t = 1$, while $h_min$ prevents the sampler from stalling at a sharp bend. To compare against a uniform grid, we tune $"tol"$ until the average step count equals that of the uniform grid. Each step costs one network evaluation, the same as plain Euler or DDIM. For the  linear path, @alg:bendflow is the Euler sampler used in the linear path in @sec:experiments. 
+*Resulting sampler.* There is no previous prediction at $k = 0$, so $h_0$ is a fixed value. When the posterior has committed (one training image carries almost all the weight), $dot(m) -> 0$ and the rule would give $h -> infinity$, so $h_max$ and the remaining time prevent overshooting $t = 1$, while $h_min$ prevents the sampler from stalling at a sharp bend. To compare against a uniform grid, we tune $"tol"$ until the average step count equals that of the uniform grid. Each step costs one network evaluation, the same as plain Euler or DDIM. On the linear path, @alg:bendflow reduces to the Euler sampler used in @sec:experiments.
 
 #place(top + center, float: true, clearance: 1.5em)[
 #figure(
   kind: "algorithm",
   supplement: [Algorithm],
-  caption: [Curvature-adaptive DDIM sampler. For the linear path, $hat(m)_k = x_k + (1 - t_k) v_k$ and line 10 is the Euler step $x_(k + 1) = x_k + h_k v_k$.],
+  caption: [Curvature-adaptive DDIM sampler initialized from the path's initial marginal. For the linear path, $alpha_0 = 0$ and $sigma_0 = 1$, so we can draw $x_0 tilde.op cal(N)(0, I)$ directly. The update reduces to the Euler step $x_(k + 1) = x_k + h_k v_k$.],
   {
     let ln(n, indent, body) = (text(size: 8pt)[#n:], pad(left: indent * 1.4em, body))
     grid(
       columns: (1.6em, 1fr),
       row-gutter: 0.55em,
-      [], [*Require:* velocity model $v$, schedule $alpha_t, sigma_t$, tolerance $"tol"$, bounds $h_min <= h_max$, first step $h_0$],
-      ..ln(1, 0, [$t_0 <- 0$, #h(1em) $x_0 tilde.op cal(N)(0, I)$, #h(1em) $k <- 0$]),
-      ..ln(2, 0, [*while* $t_k < 1$ *do*]),
-      ..ln(3, 1, [$v_k <- v(x_k, t_k)$, then $hat(m)_k, hat(epsilon)_k$ from $x_k, v_k$ by @eq:estimates]),
-      ..ln(4, 1, [*if* $k >= 1$ *then*]),
-      ..ln(5, 2, [$hat(dot(m))_k <- (hat(m)_k - hat(m)_(k - 1)) \/ h_(k - 1)$]),
-      ..ln(6, 2, [$h_k <- sqrt(2 "tol" \/ (sigma_(t_k) dot(gamma)_(t_k) ||hat(dot(m))_k||))$]),
-      ..ln(7, 2, [clip $h_k$ to $[h_min, h_max]$]),
-      ..ln(8, 1, [*end if*]),
-      ..ln(9, 1, [$h_k <- min(h_k, 1 - t_k)$, #h(1em) $t_(k + 1) <- t_k + h_k$]),
-      ..ln(10, 1, [$x_(k + 1) <- alpha_(t_(k + 1)) hat(m)_k + sigma_(t_(k + 1)) hat(epsilon)_k$, #h(1em) $k <- k + 1$]),
-      ..ln(11, 0, [*end while*]),
-      ..ln(12, 0, [*return* $x_k$]),
+      [], [*Require:* training set $cal(X)$, velocity model $v$, schedule $alpha_t, sigma_t$, tolerance $"tol"$, bounds $h_min <= h_max$, first step $h_0$],
+      ..ln(1, 0, [Draw $x_1$ uniformly from $cal(X)$ and draw $epsilon_0 tilde.op cal(N)(0, I)$ independently]),
+      ..ln(2, 0, [$x_0 <- alpha_0 x_1 + sigma_0 epsilon_0$, #h(1em) $t_0 <- 0$, #h(1em) $k <- 0$]),
+      ..ln(3, 0, [*while* $t_k < 1$ *do*]),
+      ..ln(4, 1, [$v_k <- v(x_k, t_k)$, then $hat(m)_k, hat(epsilon)_k$ from $x_k, v_k$ by @eq:estimates]),
+      ..ln(5, 1, [*if* $k >= 1$ *then*]),
+      ..ln(6, 2, [$hat(dot(m))_k <- (hat(m)_k - hat(m)_(k - 1)) \/ h_(k - 1)$]),
+      ..ln(7, 2, [$h_k <- sqrt(2 "tol" \/ (sigma_(t_k) dot(gamma)_(t_k) ||hat(dot(m))_k||))$]),
+      ..ln(8, 2, [clip $h_k$ to $[h_min, h_max]$]),
+      ..ln(9, 1, [*end if*]),
+      ..ln(10, 1, [$h_k <- min(h_k, 1 - t_k)$, #h(1em) $t_(k + 1) <- t_k + h_k$]),
+      ..ln(11, 1, [$x_(k + 1) <- alpha_(t_(k + 1)) hat(m)_k + sigma_(t_(k + 1)) hat(epsilon)_k$, #h(1em) $k <- k + 1$]),
+      ..ln(12, 0, [*end while*]),
+      ..ln(13, 0, [*return* $x_k$]),
     )
   },
 ) <alg:bendflow>
@@ -448,7 +449,7 @@ The connection between the Jacobian of the denoiser and the posterior covariance
 
 = Limitations and conclusion <sec:conclusion>
 
-All statements are about the exact marginal field of a finite training set under the linear path. Sampling with that field reproduces training images, so it serves as a reference for memorisation and not as a generator. The bound @eq:local is an upper bound and can be loose, in particular through the factor $||hat(epsilon)||$ and the bound on $kappa$. @prop:est covers the exact field only, and the step-size rule controls the local error; we do not prove a bound on the global error. The novelty claims rest on a search of the closest literature and not on a proof that the results are absent elsewhere. The experiments confirm the identities; the bound on $lambda_max (C)$ is within one to two orders of magnitude, but those on $||kappa||$ and $||dot(m)||$ are too loose to use quantitatively. The bend peaks at commitment on most, but not all, exact trajectories, and trained networks follow the exact field only until commitment. The step-size rule helps on trained networks, most at low NFE, but it needs tuned settings, and a fixed schedule built from the mean curvature profile captures much of the gain; on MNIST and the exact field it is as good or better. We measure the error to a fine-step reference rather than sample quality, with $128$ samples, one draw of noise and small networks.
+The theoretical results concern the exact marginal field of a finite training set under the Gaussian paths specified in @sec:setup. Sampling with that field reproduces training images, so it serves as a reference for memorisation and not as a generator. The bound @eq:local is an upper bound and can be loose, in particular through the factor $||hat(epsilon)||$ and the bound on $kappa$. @prop:est covers the exact field only, and the step-size rule controls the local error; we do not prove a bound on the global error. The novelty claims rest on a search of the closest literature and not on a proof that the results are absent elsewhere. The experiments confirm the identities; the bound on $lambda_max (C)$ is within one to two orders of magnitude, but those on $||kappa||$ and $||dot(m)||$ are too loose to use quantitatively. The bend peaks at commitment on most, but not all, exact trajectories, and trained networks follow the exact field only until commitment. The step-size rule helps on trained networks, most at low NFE, but it needs tuned settings, and a fixed schedule built from the mean curvature profile captures much of the gain; on MNIST and the exact field it is as good or better. We measure the error to a fine-step reference rather than sample quality, with $128$ samples, one draw of noise and small networks.
 
 #heading(numbering: none)[LLM Usage]
 Claude (Anthropic) was used to verify the derivations, to search for related work, and it introduced the notation $C$ and $kappa$; $m$ is also the standard notation for the denoiser in the literature. Claude was also used to check the author-written Python code and to write all the tests and the testing scripts, which the author reviewed manually. The handwritten math derivations are available in the repository, and this LaTeX document was constructed from them.
@@ -517,15 +518,15 @@ To first order in $Delta$, the component of the separation along $q_k$ therefore
 
 *Collapse onto one image.* For $t < 1$ every weight $w_i$ is positive, so $C = 0$ holds exactly only if all training images coincide. The statement "$C = 0$" describes the limit in which one image $x^((i^star))$ carries all the weight. In that limit $m = x^((i^star))$, $C = 0$ and $kappa = 0$, so $dot(m) = 0$ by @eq:mdot, the Jacobian is $J = (dot(sigma)_t \/ sigma_t) I$, and by @eq:u-x the field is $u_t (x) = (dot(sigma)_t \/ sigma_t) x + sigma_t dot(gamma)_t x^((i^star))$. Its trajectories are
 $ x(t) - alpha_t x^((i^star)) = sigma_t/sigma_(t_0) (x(t_0) - alpha_(t_0) x^((i^star))), $
-as differentiating both sides shows: since $sigma_t dot(gamma)_t - dot(alpha)_t = -alpha_t dot(sigma)_t \/ sigma_t$, the left side has derivative $u_t (x(t)) - dot(alpha)_t x^((i^star)) = (dot(sigma)_t \/ sigma_t) (x(t) - alpha_t x^((i^star)))$, and so does the right side. Every trajectory therefore follows a conditional path $alpha_t x^((i^star)) + sigma_t c$ with a fixed $c$ and reaches $x^((i^star))$ at $t = 1$; for the linear path this is a straight line. The distance between two trajectories is multiplied by $sigma_t \/ sigma_(t_0)$, which is the relative rate $abs(dot(sigma)_t) \/ sigma_t$, and $1 \/ (1 - t)$ for the linear path.
+as differentiating both sides shows: since $sigma_t dot(gamma)_t - dot(alpha)_t = -alpha_t dot(sigma)_t \/ sigma_t$, the left side has derivative $u_t (x(t)) - dot(alpha)_t x^((i^star)) = (dot(sigma)_t \/ sigma_t) (x(t) - alpha_t x^((i^star)))$, and so does the right side. Every trajectory therefore follows a conditional path $alpha_t x^((i^star)) + sigma_t c$ with a fixed $c$ and reaches $x^((i^star))$ at $t = 1$; for the linear path this is a straight line. The distance between two trajectories is multiplied by $sigma_t \/ sigma_(t_0)$, so its instantaneous relative rate of change is $dot(sigma)_t \/ sigma_t$. On the linear path the distance shrinks at relative rate $1 \/ (1 - t)$.
 
 *When trajectories separate.* For $t in (0, 1)$,
 $ mu > 0 <==> gamma_t dot(gamma)_t lambda + (dot(sigma)_t)/(sigma_t) > 0 <==> lambda > -(dot(sigma)_t)/(sigma_t gamma_t dot(gamma)_t) = tau_t , $
 so some direction separates if and only if $lambda_max (C) > tau_t$. Two upper bounds on $lambda_max (C)$ show what this requires. First, as in the proof of @eq:lam in @app:bounds, a weighted variance is at most the weighted mean squared deviation from any point; with the point $x^((i^star))$ of largest weight and a unit vector $v$,
 $ v^top C v <= sum_i w_i (v dot.op (x^((i)) - x^((i^star))))^2 <= sum_(i != i^star) w_i D^2 = (1 - w_(i^star)) D^2 . $
-Second, @eq:lam gives $lambda_max (C) <= D_A^2/4 + delta D^2$. Separation in some direction therefore requires both
+Second, @eq:lam gives $lambda_max (C) <= D_A^2/4 + delta D^2$. For $D > 0$, separation in some direction therefore requires both
 $ 1 - w_(i^star) > tau_t/D^2 wide "and" wide D_A^2/4 + delta D^2 > tau_t . $
-The first condition says that the largest weight is bounded away from $1$, so the posterior has not yet settled on one image. The second says, for small $delta$, that the active images are spread over a distance of more than about $2 sqrt(tau_t)$, which is $(2(1 - t))/sqrt(t)$ for the linear path. Together they are the precise form of "choosing between images that are far apart".
+When $tau_t > 0$, the first condition requires the posterior mass outside the most likely image to exceed a positive threshold. When $tau_t > delta D^2$, the second condition requires that $D_A > 2 sqrt(tau_t - delta D^2)$. On the linear path this threshold approaches $(2(1 - t))/sqrt(t)$ as $delta -> 0$.
 
 = Proof of @thm:mdot <app:mdot>
 
@@ -571,7 +572,7 @@ So the largest $g_i$ belongs to the training image nearest to $x \/ alpha_t$, wh
 $ - gamma_t^2 / 2 ||x \/ alpha_t - x^((i))||^2 >= - gamma_t^2 / 2 ||x \/ alpha_t - x^((i^star))||^2 - log N/delta . $
 Multiplying by the negative number $-2 / gamma_t^2$ reverses the inequality and gives
 $ ||x\/alpha_t - x^((i))||^2 <= ||x\/ alpha_t - x^((i^star))||^2 + 2 / gamma_t^2 log N/delta . $
-Every step is an equivalence, so $i in A$ if and only if this holds. The slack $2 / gamma_t^2 log N/delta$ tends to $0$ as $t -> 1$ and to infinity as $t -> 0$, where every image is active.
+Every step is an equivalence, so $i in A$ if and only if this holds. At the clean endpoint, $alpha_t -> 1$ and $sigma_t -> 0$, so the slack $2 / gamma_t^2 log N/delta$ tends to $0$ as $t -> 1$. At a pure-noise start with $alpha_0 = 0$, all logits $g_i$ are equal and every image is active.
 
 = Proofs of the local bounds <app:bounds>
 
@@ -618,9 +619,9 @@ because $sigma_s dot(gamma)_s = dot(alpha)_s - alpha_s dot(sigma)_s \/ sigma_s$.
 *Local error.* Subtracting the DDIM step from $x(t + h) = alpha_(t + h) M(t + h) + sigma_(t + h) E(t + h)$ gives
 $ x(t + h) - x^"DDIM" = alpha_(t + h) (M(t + h) - M(t)) + sigma_(t + h) (E(t + h) - E(t)). $
 Expanding $alpha$, $sigma$, $M$ and $E$ around $t$ to second order, with all derivatives at $t$,
-$ x(t + h) - x^"DDIM" = h (alpha_t dot(M) + sigma_t dot(E)) + h^2 (dot(alpha)_t dot(M) + dot(sigma)_t dot(E)) + h^2/2 (alpha_t dot.double(M) + sigma_t dot.double(E)) + O(h^3). $
+$ x(t + h) - x^"DDIM" = h (alpha_t dot(M) + sigma_t dot(E)) + h^2 (dot(alpha)_t dot(M) + dot(sigma)_t dot(E)) + h^2/2 (alpha_t dot.double(M) + sigma_t dot.double(E)) + o(h^2). $
 By @eq:epsdot, $alpha_s dot(M) + sigma_s dot(E) = 0$ for every $s$, so the first bracket vanishes, and differentiating this identity gives $alpha_t dot.double(M) + sigma_t dot.double(E) = -(dot(alpha)_t dot(M) + dot(sigma)_t dot(E))$. Hence, using $dot(E) = -gamma_t dot(M)$ once more,
-$ x(t + h) - x^"DDIM" = h^2/2 (dot(alpha)_t dot(M) + dot(sigma)_t dot(E)) + O(h^3) = h^2/2 (dot(alpha)_t - gamma_t dot(sigma)_t) dot(m) + O(h^3) = h^2/2 sigma_t dot(gamma)_t dot(m) + O(h^3), $
+$ x(t + h) - x^"DDIM" = h^2/2 (dot(alpha)_t dot(M) + dot(sigma)_t dot(E)) + o(h^2) = h^2/2 (dot(alpha)_t - gamma_t dot(sigma)_t) dot(m) + o(h^2) = h^2/2 sigma_t dot(gamma)_t dot(m) + o(h^2), $
 which is @eq:ddim-error. #h(1fr) $square$
 
 = Proof of @prop:est <app:est>
