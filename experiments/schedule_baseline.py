@@ -1,20 +1,22 @@
 import argparse
 import json
 import time
-from pathlib import Path
 
 import matplotlib
 import matplotlib.ticker
 import numpy as np
+import torch
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from bendflow.experiment import add_runtime_args, as_numpy, experiment_device, initial_samples, result_directory
+from bendflow.paths import GaussianPath
 from bendflow.plotting import save_figure, science_figure
 
 # Categorical slots 1 to 4 of the validated palette; the markers carry identity as well, since slots 3 and 4 have low contrast.
 METHODS = {
-    "uniform": ("uniform Euler", "#2a78d6", "o"),
+    "uniform": ("uniform", "#2a78d6", "o"),
     "bendflow": ("BendFlow, config settings", "#eb6834", "s"),
     "bendflow_tuned": ("BendFlow, tuned settings", "#1baf7a", "^"),
     "schedule": ("fixed schedule from mean profile", "#eda100", "D"),
@@ -31,16 +33,17 @@ def parse_args():
     p.add_argument("--calib-samples", type=int, default=32, help="calibration samples (schedule and settings)")
     p.add_argument("--seed", type=int, default=1, help="evaluation noise; 1 gives the same samples as sampler_comparison.py")
     p.add_argument("--calib-seed", type=int, default=2, help="calibration noise, disjoint from the evaluation noise")
-    p.add_argument("--ref-steps", type=int, default=1000, help="uniform Euler steps of the reference solution")
-    p.add_argument("--profile-steps", type=int, default=200, help="uniform Euler steps used to measure the mean profile")
+    p.add_argument("--ref-steps", type=int, default=1000, help="uniform steps of the reference solution")
+    p.add_argument("--profile-steps", type=int, default=200, help="uniform steps used to measure the mean profile")
     p.add_argument("--h0-grid", nargs="+", type=float, default=[0.01, 0.05, 0.1])
     p.add_argument("--h-min-grid", nargs="+", type=float, default=[0.001, 0.005, 0.02])
     p.add_argument("--h-max-grid", nargs="+", type=float, default=[0.25], help="0.25 is the config value; larger values leave room to adapt at NFE 5")
     p.add_argument("--bisect-iters", type=int, default=14, help="bisection steps on log10(tol) per target NFE")
     p.add_argument("--batch", type=int, default=8, help="samples evaluated together (memory)")
-    p.add_argument("--checkpoints", default="checkpoints")
+    p.add_argument("--checkpoints", default=None)
     p.add_argument("--out", default=None, help="output directory")
     p.add_argument("--replot", action="store_true", help="only redraw the figure from the saved summary.json")
+    add_runtime_args(p)
     return p.parse_args()
 
 
@@ -48,14 +51,17 @@ def rms(a, b):
     return np.sqrt(np.mean((np.asarray(a) - np.asarray(b)) ** 2, axis=-1))
 
 
-# Grid with n steps that puts equal mass of rho(t) = sqrt(profile(t) / (1 - t)) in every step, the step rule of
-# Algorithm 1 with the mean profile in place of the per-sample estimate. profile[k] describes t_k = k / P.
-def schedule_from_profile(profile: np.ndarray, n: int) -> np.ndarray:
+# Equalize the mass of sqrt(profile(t) * sigma(t) * gamma_dot(t)) across the grid.
+# The mean profile replaces the per-sample estimate in Algorithm 1.
+def schedule_from_profile(profile: np.ndarray, n: int, path: GaussianPath = GaussianPath.LINEAR) -> np.ndarray:
     p = len(profile) + 1
     edges = np.linspace(0.0, 1.0, p + 1)
     mids = 0.5 * (edges[:-1] + edges[1:])
     prof = np.append(profile, profile[-1])
-    rho = np.sqrt(np.maximum(prof, 0.0) / (1.0 - mids))
+    scale = as_numpy(path.velocity_scale(torch.from_numpy(mids))).clip(min=0)
+    rho = np.sqrt(np.maximum(prof, 0.0) * scale)
+    if not rho.any():
+        return np.linspace(0, 1, n + 1)
     rho = np.maximum(rho, 1e-6 * rho.max())  # keeps the cumulative mass strictly increasing
     mass = np.concatenate([[0.0], np.cumsum(rho * np.diff(edges))])
     ts = np.interp(np.linspace(0.0, mass[-1], n + 1), mass, edges)
@@ -67,9 +73,12 @@ def schedule_from_profile(profile: np.ndarray, n: int) -> np.ndarray:
 def plot(path, summary):
     fields = list(summary["fields"])
     fig, axes = plt.subplots(1, len(fields), figsize=(3.8 * len(fields), 3.2), squeeze=False)
+    solver = GaussianPath(summary.get("args", {}).get("schedule", "linear")).solver
     for ax, name in zip(axes[0], fields):
         rows = summary["fields"][name]["rows"]
         for m, (label, color, marker) in METHODS.items():
+            if m == "uniform":
+                label = f"uniform {solver}"
             pts = [(r[m]["mean_nfe"], r[m]["rms_err_mean"]) for r in rows if m in r]
             if pts:
                 ax.plot(*zip(*pts), color=color, lw=2, marker=marker, ms=6, label=label)
@@ -87,44 +96,36 @@ def plot(path, summary):
 
 def main():
     args = parse_args()
-    out = Path(args.out or f"results/schedule_baseline_{args.dataset}")
+    out = result_directory(args, "schedule_baseline")
     out.mkdir(parents=True, exist_ok=True)
     if args.replot:
         plot(out / "error_vs_nfe", json.loads((out / "summary.json").read_text()))
         print(f"figure redrawn in {out}/")
         return
 
-    import equinox as eqx
-    import jax
-    import jax.numpy as jnp
-
     from bendflow.config import load_math_config
     from bendflow.data import load_images
     from bendflow.fields import ExactField
     from bendflow.networks import load_network
     from bendflow.posterior import EmpiricalPosterior
-    from bendflow.samplers import BendFlowEuler, ScheduleEuler, UniformEuler
+    from bendflow.samplers import BendFlowEuler, ScheduleEuler, UniformEuler, run_batches
 
-    jax.config.update("jax_enable_x64", True)
-
+    device = experiment_device(args.device)
     start = time.perf_counter()
     cfg = load_math_config().sampler
     raw = load_images(args.dataset)
-    data = jnp.asarray(raw, dtype=jnp.float64)
+    data = torch.as_tensor(raw, dtype=torch.float64, device=device)
     n, d = raw.shape
-    x_eval = jax.random.normal(jax.random.key(args.seed), (args.num_samples, d), jnp.float64)
-    x_cal = jax.random.normal(jax.random.key(args.calib_seed), (args.calib_samples, d), jnp.float64)
-    print(f"{args.dataset}: N={n} d={d} eval={args.num_samples} calib={args.calib_samples} nfe={args.nfe} fields={args.fields} devices={jax.devices()}", flush=True)
-
-    # One compiled function per sampler structure; the settings and the grid are traced arrays.
-    batched = eqx.filter_jit(lambda sampler, field, xs: jax.lax.map(lambda x: sampler(field, x), xs, batch_size=args.batch))
+    x_eval = initial_samples(data, args.num_samples, args.seed, args.schedule)
+    x_cal = initial_samples(data, args.calib_samples, args.calib_seed, args.schedule)
+    print(f"{args.dataset}: N={n} d={d} eval={args.num_samples} calib={args.calib_samples} nfe={args.nfe} fields={args.fields} device={device}", flush=True)
 
     def run(sampler, field, xs):
-        tr = batched(sampler, field, xs)
-        return tr, np.asarray(tr.xs[:, -1]), np.asarray(tr.nfe)
+        tr = run_batches(sampler, field, xs, args.batch)
+        return tr, as_numpy(tr.sample), as_numpy(tr.nfe)
 
     def bendflow(tol, h_min, h0, h_max):
-        return BendFlowEuler(jnp.asarray(tol), jnp.asarray(h_min), jnp.asarray(h_max), jnp.asarray(h0), cfg.max_steps)
+        return BendFlowEuler(tol, h_min, h_max, h0, cfg.max_steps, args.schedule)
 
     # Smallest tol with mean NFE at most target, by bisection on log10(tol). Returns (tol, samples, nfe) or None.
     def tune_tol(field, xs, target, h_min, h0, h_max):
@@ -139,20 +140,20 @@ def main():
         return best
 
     def nearest(samples):
-        return np.array([int(jnp.argmin(jnp.sum((data - s) ** 2, axis=1))) for s in samples])
+        return np.array([int((data - s).square().sum(dim=-1).argmin()) for s in torch.as_tensor(samples, device=device)])
 
-    summary = {"args": vars(args), "sampler_config": {"h_min": cfg.h_min, "h_max": cfg.h_max, "h0": cfg.h0, "max_steps": cfg.max_steps}, "n": n, "d": d, "fields": {}}
+    summary = {"backend": "pytorch", "args": vars(args), "sampler_config": {"h_min": cfg.h_min, "h_max": cfg.h_max, "h0": cfg.h0, "max_steps": cfg.max_steps}, "n": n, "d": d, "fields": {}}
     for name in args.fields:
-        field = ExactField(EmpiricalPosterior(data)) if name == "exact" else load_network(name, args.dataset, args.checkpoints)[0]
-        _, ref, _ = run(UniformEuler(args.ref_steps), field, x_eval)
-        _, half, _ = run(UniformEuler(args.ref_steps // 2), field, x_eval)
-        _, ref_cal, _ = run(UniformEuler(args.ref_steps), field, x_cal)
+        field = ExactField(EmpiricalPosterior(data, args.schedule)) if name == "exact" else load_network(name, args.dataset, args.checkpoints, device=device, path=args.schedule)[0]
+        _, ref, _ = run(UniformEuler(args.ref_steps, args.schedule), field, x_eval)
+        _, half, _ = run(UniformEuler(args.ref_steps // 2, args.schedule), field, x_eval)
+        _, ref_cal, _ = run(UniformEuler(args.ref_steps, args.schedule), field, x_cal)
         ref_err = rms(ref, half)
         ref_near = nearest(ref) if name == "exact" else None
 
         # Mean estimated ||mdot|| over the calibration samples, on a fine uniform grid.
-        tr, _, _ = run(UniformEuler(args.profile_steps), field, x_cal)
-        est = np.linalg.norm(np.diff(np.asarray(tr.x1_hats), axis=1), axis=2) * args.profile_steps
+        tr, _, _ = run(UniformEuler(args.profile_steps, args.schedule), field, x_cal)
+        est = np.linalg.norm(np.diff(as_numpy(tr.x1_hats), axis=1), axis=2) * args.profile_steps
         profile = est.mean(axis=0)
         print(f"{name}: references and profile done, reference self-error median {np.median(ref_err):.2e}, {time.perf_counter() - start:.0f}s", flush=True)
 
@@ -167,7 +168,7 @@ def main():
 
         rows = []
         for target in args.nfe:
-            _, uni, uni_nfe = run(UniformEuler(target), field, x_eval)
+            _, uni, uni_nfe = run(UniformEuler(target, args.schedule), field, x_eval)
             row = {"target_nfe": target}
             row["uniform"], uni_err = describe(uni, uni_nfe)
 
@@ -193,8 +194,8 @@ def main():
                     row["bendflow_tuned"], _ = describe(found[1], found[2], uni_err)
                     row["bendflow_tuned"].update(tol=found[0], h0=h0, h_min=h_min, h_max=h_max, calib_rms_err_mean=best[0])
 
-            ts = schedule_from_profile(profile, target)
-            _, sch, sch_nfe = run(ScheduleEuler(jnp.asarray(ts)), field, x_eval)
+            ts = schedule_from_profile(profile, target, args.schedule)
+            _, sch, sch_nfe = run(ScheduleEuler(ts, args.schedule), field, x_eval)
             row["schedule"], _ = describe(sch, sch_nfe, uni_err)
             row["schedule"]["grid"] = [round(float(t), 4) for t in ts]
             rows.append(row)

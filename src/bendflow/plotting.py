@@ -6,7 +6,6 @@ from functools import wraps
 import matplotlib.pyplot as plt
 import scienceplots  # noqa: F401  # Registers the SciencePlots styles.
 
-
 GRID_STYLE = {
     "axes.grid": True,
     "axes.grid.which": "major",

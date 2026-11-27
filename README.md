@@ -45,32 +45,38 @@ The write-up is [`documentation/paper.pdf`](documentation/paper.pdf), and the de
 
 ## Setup
 
-The code is written in JAX and managed with [uv](https://docs.astral.sh/uv/).
+The code is written in PyTorch and managed with [uv](https://docs.astral.sh/uv/).
 
     git clone https://github.com/Stochastic-Batman/BendFlow.git
     cd BendFlow
-    uv sync                    # CPU
-    uv sync --extra cuda13     # NVIDIA GPU, CUDA 13 (Linux only)
-    uv sync --extra cuda12     # NVIDIA GPU, CUDA 12 (Linux only)
+    uv sync --locked
 
 Check the installation and run the tests:
 
-    uv run python -c "import jax; print(jax.__version__, jax.devices())"
+    uv run python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
     uv run pytest
 
 Python 3.12 is pinned in `.python-version`; uv installs it if it is missing.
 
 ## Reproducing the results
 
-Each script writes a `summary.json` and figures to `results/`. The times are for one NVIDIA A100; MNIST runs of the first three also work on a CPU, more slowly. The trained networks are not in the repository: `train.py` writes them to `checkpoints/`, and the later scripts read them from there.
+The archived JAX experiment outputs are in `results/`. New PyTorch runs write to
+`results/pytorch/<schedule>/` and store weights in `checkpoints/<schedule>/`.
+Omit `--schedule` for the original linear path, or use `--schedule cosine` for
+cosine VP and `--schedule ve` for exponential VE. Every schedule trains its own
+U-Net and DiT. The experiments use Euler on the linear path and deterministic
+DDIM on the nonlinear paths. VE starts from the empirical initial marginal
+`x_1 + 10 epsilon`.
 
-| Command | What it does | Time |
-|---|---|---|
-| `uv run python experiments/train.py --dataset cifar10 --model dit` | trains one network | 25 to 75 min |
-| `uv run python experiments/exact_field.py --dataset cifar10` | identities, bounds and active set of the exact field | 4 to 5 min |
-| `uv run python experiments/trained_networks.py --dataset cifar10` | networks against the exact field | 2 to 4 min |
-| `uv run python experiments/schedule_baseline.py --dataset cifar10 --nfe 5 10 20 40 --num-samples 128 --seed 4 --h-max-grid 0.25 0.5 --out results/schedule_baseline_cifar10_n128` | sampler comparison | 20 to 25 min |
-| `uv run python experiments/sample_grids.py --dataset cifar10` | sample grids, after the comparison | 1 min |
+| Command | What it does |
+|---|---|
+| `uv run python experiments/train.py --dataset cifar10 --model unet` | trains the U-Net |
+| `uv run python experiments/train.py --dataset cifar10 --model dit` | trains the DiT |
+| `uv run python experiments/exact_field.py --dataset cifar10 --div-batch 1` | identities, bounds and active set of the exact field |
+| `uv run python experiments/trained_networks.py --dataset cifar10` | networks against the exact field |
+| `uv run python experiments/sampler_comparison.py --dataset cifar10` | adaptive and uniform sampling at matched cost |
+| `uv run python experiments/schedule_baseline.py --dataset cifar10 --nfe 5 10 20 40 --num-samples 128 --seed 4 --h-max-grid 0.25 0.5 --out results/pytorch/linear/schedule_baseline_cifar10_n128` | comparison with a calibrated fixed grid |
+| `uv run python experiments/sample_grids.py --dataset cifar10` | sample grids using the 128-sample calibration |
 
 ## What is new and what is not
 

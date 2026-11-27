@@ -5,15 +5,18 @@ from pathlib import Path
 
 import matplotlib
 import numpy as np
+import torch
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from bendflow.experiment import add_runtime_args, as_numpy, experiment_device, initial_samples, result_directory
+from bendflow.paths import GaussianPath
 from bendflow.plotting import save_figure, science_figure
 
 ROWS = {
-    "reference": "reference (1000 steps)",
-    "uniform": "uniform Euler",
+    "reference": "reference",
+    "uniform": "uniform",
     "bendflow": "BendFlow, config",
     "bendflow_tuned": "BendFlow, tuned",
     "schedule": "fixed schedule",
@@ -30,8 +33,9 @@ def parse_args():
     p.add_argument("--seed", type=int, default=3, help="noise for the grids, disjoint from evaluation (1) and calibration (2)")
     p.add_argument("--ref-steps", type=int, default=1000)
     p.add_argument("--settings", default=None, help="schedule_baseline output whose tol, h0, h_min, h_max and grids are reused")
-    p.add_argument("--checkpoints", default="checkpoints")
+    p.add_argument("--checkpoints", default=None)
     p.add_argument("--out", default=None, help="output directory")
+    add_runtime_args(p)
     return p.parse_args()
 
 
@@ -50,7 +54,7 @@ def strip(samples, shape):
 
 
 @science_figure
-def plot(path, title, panels, shape):
+def plot(path, title, panels, shape, schedule, ref_steps):
     nfes = list(panels)
     fig, axes = plt.subplots(len(ROWS), len(nfes), figsize=(3.4 * len(nfes), 0.75 * len(ROWS) + 0.6), squeeze=False)
     gray = shape[0] == 1
@@ -71,7 +75,8 @@ def plot(path, title, panels, shape):
             if m != "reference":
                 ax.set_title(f"NFE {cell['mean_nfe']:.1f}, RMS err {cell['rms_err_mean']:.3f}", fontsize=7, pad=2)
             if j == 0:
-                ax.set_ylabel(ROWS[m], fontsize=8, rotation=0, ha="right", va="center")
+                label = {"uniform": f"uniform {schedule.solver}", "reference": f"reference ({ref_steps} steps)"}.get(m, ROWS[m])
+                ax.set_ylabel(label, fontsize=8, rotation=0, ha="right", va="center")
         axes[0][j].set_title(f"target NFE {nfe}", fontsize=9, pad=4)
     fig.suptitle(title, fontsize=10)
     save_figure(fig, path)
@@ -79,51 +84,48 @@ def plot(path, title, panels, shape):
 
 def main():
     args = parse_args()
-    import equinox as eqx
-    import jax
-    import jax.numpy as jnp
-
     from bendflow.config import load_math_config
-    from bendflow.data import image_shape
+    from bendflow.data import image_shape, load_images
     from bendflow.networks import load_network
     from bendflow.samplers import BendFlowEuler, ScheduleEuler, UniformEuler
 
-    jax.config.update("jax_enable_x64", True)
-
-    out = Path(args.out or f"results/sample_grids_{args.dataset}")
+    device = experiment_device(args.device)
+    base = f"results/pytorch/{args.schedule}"
+    out = result_directory(args, "sample_grids")
     out.mkdir(parents=True, exist_ok=True)
-    settings_dir = Path(args.settings or f"results/schedule_baseline_{args.dataset}_n128")
+    settings_dir = Path(args.settings or f"{base}/schedule_baseline_{args.dataset}_n128")
     settings = json.loads((settings_dir / "summary.json").read_text())
+    if settings.get("args", {}).get("schedule", GaussianPath.LINEAR) != args.schedule:
+        raise ValueError("Sampler calibration is for a different schedule")
     start = time.perf_counter()
     cfg = load_math_config().sampler
     shape = image_shape(args.dataset)
     d = int(np.prod(shape))
-    x0 = jax.random.normal(jax.random.key(args.seed), (args.num_images, d), jnp.float64)
-    print(f"{args.dataset}: images={args.num_images} nfe={args.nfe} models={args.models} settings={settings_dir} devices={jax.devices()}", flush=True)
-
-    batched = eqx.filter_jit(lambda sampler, field, xs: jax.vmap(lambda x: sampler(field, x))(xs))
+    data = torch.as_tensor(load_images(args.dataset), dtype=torch.float64, device=device) if args.schedule is GaussianPath.VE else torch.empty((0, d), dtype=torch.float64, device=device)
+    x0 = initial_samples(data, args.num_images, args.seed, args.schedule)
+    print(f"{args.dataset}: images={args.num_images} nfe={args.nfe} models={args.models} settings={settings_dir} device={device}", flush=True)
 
     def run(sampler, field):
-        tr = batched(sampler, field, x0)
-        return np.asarray(tr.xs[:, -1]), np.asarray(tr.nfe)
+        tr = sampler(field, x0)
+        return as_numpy(tr.sample), as_numpy(tr.nfe)
 
-    summary = {"args": vars(args), "settings": str(settings_dir), "models": {}}
+    summary = {"backend": "pytorch", "args": vars(args), "settings": str(settings_dir), "models": {}}
     for name in args.models:
-        field = load_network(name, args.dataset, args.checkpoints)[0]
+        field = load_network(name, args.dataset, args.checkpoints, device=device, path=args.schedule)[0]
         rows = {r["target_nfe"]: r for r in settings["fields"][name]["rows"]}
-        ref, _ = run(UniformEuler(args.ref_steps), field)
+        ref, _ = run(UniformEuler(args.ref_steps, args.schedule), field)
         panels, table = {}, {}
         for nfe in args.nfe:
             row = rows.get(nfe)
             if row is None:
                 print(f"{name}: NFE {nfe} is not in {settings_dir}; skipped", flush=True)
                 continue
-            samplers = {"uniform": UniformEuler(nfe)}
+            samplers = {"uniform": UniformEuler(nfe, args.schedule)}
             for m in ("bendflow", "bendflow_tuned"):
                 if m in row:
                     c = row[m]
-                    samplers[m] = BendFlowEuler(jnp.asarray(c["tol"]), jnp.asarray(c["h_min"]), jnp.asarray(c.get("h_max", cfg.h_max)), jnp.asarray(c["h0"]), cfg.max_steps)
-            samplers["schedule"] = ScheduleEuler(jnp.asarray(row["schedule"]["grid"]))
+                    samplers[m] = BendFlowEuler(c["tol"], c["h_min"], c.get("h_max", cfg.h_max), c["h0"], cfg.max_steps, args.schedule)
+            samplers["schedule"] = ScheduleEuler(row["schedule"]["grid"], args.schedule)
             panels[nfe] = {"reference": {"samples": ref}}
             table[nfe] = {}
             for m, sampler in samplers.items():
@@ -131,14 +133,14 @@ def main():
                 cell = {"mean_nfe": float(k.mean()), "rms_err_mean": float(rms(s, ref).mean())}
                 panels[nfe][m] = {"samples": s, **cell}
                 table[nfe][m] = cell
-        plot(out / f"grid_{name}", f"{args.dataset.replace('_', ' ')}, {FIELD_LABELS[name]}: same noise under each sampler", panels, shape)
+        plot(out / f"grid_{name}", f"{args.dataset.replace('_', ' ')}, {FIELD_LABELS[name]}: same start under each sampler", panels, shape, args.schedule, args.ref_steps)
         summary["models"][name] = table
         print(f"{name} done, {time.perf_counter() - start:.0f}s", flush=True)
 
     summary["wall_time_s"] = time.perf_counter() - start
     (out / "summary.json").write_text(json.dumps(summary, indent=2))
     print("--- summary ---")
-    print("mean RMS error of the grid images to their 1000-step reference (mean NFE)")
+    print(f"mean RMS error of the grid images to their {args.ref_steps}-step reference (mean NFE)")
     for name, table in summary["models"].items():
         for nfe, cells in table.items():
             print(f"{name} NFE {nfe}: " + " | ".join(f"{m} {c['rms_err_mean']:.4f} ({c['mean_nfe']:.1f})" for m, c in cells.items()))

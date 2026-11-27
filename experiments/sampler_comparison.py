@@ -1,35 +1,37 @@
 import argparse
 import json
 import time
-from pathlib import Path
 
 import matplotlib
 import numpy as np
+import torch
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from bendflow.experiment import add_runtime_args, as_numpy, experiment_device, initial_samples, result_directory
+from bendflow.paths import GaussianPath
 from bendflow.plotting import save_figure, science_figure
 
-# Uniform Euler, BendFlow: categorical slots 1 and 2 of the validated palette.
+# Uniform, BendFlow: categorical slots 1 and 2 of the validated palette.
 COLORS = {"uniform": "#2a78d6", "bendflow": "#eb6834"}
-LABELS = {"uniform": "uniform Euler", "bendflow": "BendFlow (Alg. 1)"}
 FIELD_LABELS = {"exact": "exact field", "unet": "U-Net", "dit": "DiT"}
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Curvature-adaptive against uniform Euler at matched NFE (paper, Section 7.3).")
+    p = argparse.ArgumentParser(description="Curvature-adaptive against uniform stepping at matched NFE (paper, Section 7.3).")
     p.add_argument("--dataset", default="mnist", choices=["mnist", "fashion_mnist", "cifar10"])
     p.add_argument("--fields", nargs="+", default=["exact", "unet", "dit"], choices=["exact", "unet", "dit"])
     p.add_argument("--nfe", nargs="+", type=int, default=[10, 20, 40], help="target numbers of field evaluations")
     p.add_argument("--num-samples", type=int, default=32)
-    p.add_argument("--ref-steps", type=int, default=1000, help="uniform Euler steps of the reference solution")
+    p.add_argument("--ref-steps", type=int, default=1000, help="uniform steps of the reference solution")
     p.add_argument("--bisect-iters", type=int, default=20, help="bisection steps on log10(tol) per target NFE")
     p.add_argument("--batch", type=int, default=8, help="samples evaluated together (memory)")
     p.add_argument("--seed", type=int, default=1, help="differs from the other experiments so the samples are fresh")
-    p.add_argument("--checkpoints", default="checkpoints")
+    p.add_argument("--checkpoints", default=None)
     p.add_argument("--out", default=None, help="output directory")
     p.add_argument("--replot", action="store_true", help="only redraw the figure from the saved summary.json")
+    add_runtime_args(p)
     return p.parse_args()
 
 
@@ -40,10 +42,12 @@ def rms(a, b):
 @science_figure
 def plot(path, summary, fields):
     fig, axes = plt.subplots(1, len(fields), figsize=(3.6 * len(fields), 3.0), squeeze=False)
+    solver = GaussianPath(summary.get("args", {}).get("schedule", "linear")).solver
     for ax, name in zip(axes[0], fields):
         rows = summary["fields"][name]["rows"]
         for s in ("uniform", "bendflow"):
-            ax.plot([r[f"{s}_mean_nfe"] for r in rows], [r[f"{s}_rms_err_median"] for r in rows], color=COLORS[s], lw=2, marker="o", ms=5, label=LABELS[s])
+            label = f"uniform {solver}" if s == "uniform" else "BendFlow (Alg. 1)"
+            ax.plot([r[f"{s}_mean_nfe"] for r in rows], [r[f"{s}_rms_err_median"] for r in rows], color=COLORS[s], lw=2, marker="o", ms=5, label=label)
         ax.set_xscale("log")
         ax.set_yscale("log")
         ax.grid(True, which="both")
@@ -55,7 +59,7 @@ def plot(path, summary, fields):
 
 def main():
     args = parse_args()
-    out = Path(args.out or f"results/sampler_comparison_{args.dataset}")
+    out = result_directory(args, "sampler_comparison")
     out.mkdir(parents=True, exist_ok=True)
     if args.replot:
         summary = json.loads((out / "summary.json").read_text())
@@ -63,53 +67,47 @@ def main():
         print(f"figure redrawn in {out}/")
         return
 
-    import equinox as eqx
-    import jax
-    import jax.numpy as jnp
-
     from bendflow.config import load_math_config
     from bendflow.data import load_images
     from bendflow.fields import ExactField
     from bendflow.networks import load_network
     from bendflow.posterior import EmpiricalPosterior
-    from bendflow.samplers import BendFlowEuler, UniformEuler
+    from bendflow.samplers import BendFlowEuler, UniformEuler, run_batches
 
-    jax.config.update("jax_enable_x64", True)
-
+    device = experiment_device(args.device)
     start = time.perf_counter()
     cfg = load_math_config().sampler
     raw = load_images(args.dataset)
-    data = jnp.asarray(raw, dtype=jnp.float64)
+    data = torch.as_tensor(raw, dtype=torch.float64, device=device)
     n, d = raw.shape
-    x0s = jax.random.normal(jax.random.key(args.seed), (args.num_samples, d), jnp.float64)
-    print(f"{args.dataset}: N={n} d={d} samples={args.num_samples} nfe={args.nfe} fields={args.fields} devices={jax.devices()}", flush=True)
+    x0s = initial_samples(data, args.num_samples, args.seed, args.schedule)
+    print(f"{args.dataset}: N={n} d={d} samples={args.num_samples} nfe={args.nfe} fields={args.fields} device={device}", flush=True)
 
     def run(sampler, field):
-        f = eqx.filter_jit(lambda fld, x: sampler(fld, x))
-        res = jax.lax.map(lambda x: f(field, x), x0s, batch_size=args.batch)
-        return np.asarray(res.xs[:, -1]), np.asarray(res.nfe)
+        result = run_batches(sampler, field, x0s, args.batch)
+        return as_numpy(result.sample), as_numpy(result.nfe)
 
     def nearest(samples):
-        return np.array([int(jnp.argmin(jnp.sum((data - s) ** 2, axis=1))) for s in samples])
+        return np.array([int((data - s).square().sum(dim=-1).argmin()) for s in torch.as_tensor(samples, device=device)])
 
-    summary = {"args": vars(args), "sampler_config": {"h_min": cfg.h_min, "h_max": cfg.h_max, "h0": cfg.h0, "max_steps": cfg.max_steps}, "n": n, "d": d, "fields": {}}
+    summary = {"backend": "pytorch", "args": vars(args), "sampler_config": {"h_min": cfg.h_min, "h_max": cfg.h_max, "h0": cfg.h0, "max_steps": cfg.max_steps}, "n": n, "d": d, "fields": {}}
     for name in args.fields:
-        field = ExactField(EmpiricalPosterior(data)) if name == "exact" else load_network(name, args.dataset, args.checkpoints)[0]
-        ref, _ = run(UniformEuler(args.ref_steps), field)
-        half, _ = run(UniformEuler(args.ref_steps // 2), field)
-        # Euler is first order, so ref - half estimates the error of ref itself.
+        field = ExactField(EmpiricalPosterior(data, args.schedule)) if name == "exact" else load_network(name, args.dataset, args.checkpoints, device=device, path=args.schedule)[0]
+        ref, _ = run(UniformEuler(args.ref_steps, args.schedule), field)
+        half, _ = run(UniformEuler(args.ref_steps // 2, args.schedule), field)
+        # For a first-order solver, ref - half estimates the error of ref itself.
         ref_err = rms(ref, half)
         ref_near = nearest(ref) if name == "exact" else None
         print(f"{name}: reference done, its own error (vs half the steps) median {np.median(ref_err):.2e}, {time.perf_counter() - start:.0f}s", flush=True)
 
         rows = []
         for target in args.nfe:
-            uni, uni_nfe = run(UniformEuler(target), field)
+            uni, uni_nfe = run(UniformEuler(target, args.schedule), field)
             # Smallest tol whose mean NFE is at most the target, by bisection on log10(tol).
             lo, hi, best = -8.0, 3.0, None
             for _ in range(args.bisect_iters):
                 mid = 0.5 * (lo + hi)
-                bf, bf_nfe = run(BendFlowEuler(10.0**mid, cfg.h_min, cfg.h_max, cfg.h0, cfg.max_steps), field)
+                bf, bf_nfe = run(BendFlowEuler(10.0**mid, cfg.h_min, cfg.h_max, cfg.h0, cfg.max_steps, args.schedule), field)
                 if bf_nfe.mean() <= target:
                     hi, best = mid, (mid, bf, bf_nfe)
                 else:

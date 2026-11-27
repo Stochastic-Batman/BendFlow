@@ -1,14 +1,15 @@
 import argparse
 import json
 import time
-from pathlib import Path
 
 import matplotlib
 import numpy as np
+import torch
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from bendflow.experiment import add_runtime_args, as_numpy, experiment_device, generator, initial_samples, result_directory
 from bendflow.plotting import save_figure, science_figure
 
 # A point counts as undecided while the largest posterior weight is below this.
@@ -35,65 +36,49 @@ def parse_args():
     p.add_argument("--float32", action="store_true", help="single precision (default: double)")
     p.add_argument("--out", default=None, help="output directory")
     p.add_argument("--replot", action="store_true", help="only redraw the figures from the saved curves.npz")
+    add_runtime_args(p)
     return p.parse_args()
 
 
 # Relative errors of the closed forms against autodiff and central differences.
-def identity_checks(post, field, points, key, div_points, div_batch):
-    import equinox as eqx
-    import jax
-    import jax.numpy as jnp
+def identity_checks(post, field, points, rng, div_points, div_batch):
+    from torch.func import jvp, vmap
 
     from bendflow.curvature import divergence_closed_form, mdot_autodiff, mdot_closed_form
 
     def rel_err(a, b):
-        return float(jnp.linalg.norm(a - b) / jnp.linalg.norm(b))
+        return float(torch.linalg.vector_norm(a - b) / torch.linalg.vector_norm(b))
 
-    dtype = post.data.dtype
-    h = float(jnp.finfo(dtype).eps) ** (1 / 3)
+    dt = torch.finfo(post.data.dtype).eps ** (1 / 3)
     d = post.data.shape[1]
-
-    @eqx.filter_jit
-    def jac_check(x, t, v):
-        closed = t / (1 - t) ** 2 * post.cov_matvec(x, t, v)
-        auto = jax.jvp(lambda y: post.mean(y, t), (x,), (v,))[1]
-        fd = (post.mean(x + h * v, t) - post.mean(x - h * v, t)) / (2 * h)
-        return closed, auto, fd
-
-    @eqx.filter_jit
-    def mdot_check(x, t):
-        u = field(x, t)
-        m = lambda s: post.mean(x + s * u, t + s)
-        return (
-            mdot_closed_form(post, x, t),
-            mdot_autodiff(field, x, t),
-            (m(h) - m(-h)) / (2 * h),
-        )
-
-    @eqx.filter_jit
-    def div_check(x, t):
-        diag = jax.lax.map(
-            lambda e: e @ jax.jvp(lambda y: field(y, t), (x,), (e,))[1],
-            jnp.eye(d, dtype=dtype),
-            batch_size=div_batch,
-        )
-        return divergence_closed_form(post, x, t), jnp.sum(diag)
-
     rows = []
     for i, (x, t) in enumerate(points):
-        v = jax.random.normal(jax.random.fold_in(key, i), (d,), dtype)
-        jc, ja, jf = jac_check(x, t, v / jnp.linalg.norm(v))
-        mc, ma, mf = mdot_check(x, t)
+        v = torch.randn(x.shape, dtype=x.dtype, device=x.device, generator=rng)
+        v = v / torch.linalg.vector_norm(v)
+        alpha, sigma, _, _ = post.path.coefficients(t)
+        jac_closed = alpha / sigma.square() * post.cov_matvec(x, t, v)
+        jac_auto = jvp(lambda y, t=t: post.mean(y, t), (x,), (v,))[1]
+        jac_fd = (post.mean(x + dt * v, t) - post.mean(x - dt * v, t)) / (2 * dt)
+        u = field(x, t)
+        motion_closed = mdot_closed_form(post, x, t)
+        motion_auto = mdot_autodiff(field, x, t, post.path)
+        motion_fd = (post.mean(x + dt * u, t + dt) - post.mean(x - dt * u, t - dt)) / (2 * dt)
         row = {
             "t": float(t),
-            "jacobian_vs_autodiff": rel_err(jc, ja),
-            "jacobian_vs_finite_diff": rel_err(jc, jf),
-            "mdot_vs_autodiff": rel_err(mc, ma),
-            "mdot_vs_finite_diff": rel_err(mc, mf),
+            "jacobian_vs_autodiff": rel_err(jac_closed, jac_auto),
+            "jacobian_vs_finite_diff": rel_err(jac_closed, jac_fd),
+            "mdot_vs_autodiff": rel_err(motion_closed, motion_auto),
+            "mdot_vs_finite_diff": rel_err(motion_closed, motion_fd),
         }
         if i < div_points:
-            dc, da = div_check(x, t)
-            row["divergence_vs_autodiff"] = float(jnp.abs(dc - da) / jnp.abs(da))
+
+            def diagonal(e, x=x, t=t):
+                return e @ jvp(lambda y: field(y, t), (x,), (e,))[1]
+
+            basis = torch.eye(d, dtype=x.dtype, device=x.device)
+            div_auto = vmap(diagonal, chunk_size=div_batch)(basis).sum()
+            div_closed = divergence_closed_form(post, x, t)
+            row["divergence_vs_autodiff"] = float((div_closed - div_auto).abs() / div_auto.abs())
         rows.append(row)
     return rows
 
@@ -145,7 +130,7 @@ def plot_active_set(path, ts, n_active, d_active):
 
 def main():
     args = parse_args()
-    out = Path(args.out or f"results/exact_field_{args.dataset}")
+    out = result_directory(args, "exact_field")
     out.mkdir(parents=True, exist_ok=True)
     if args.replot:
         c = np.load(out / "curves.npz")
@@ -154,10 +139,6 @@ def main():
         print(f"figures redrawn in {out}/")
         return
 
-    import equinox as eqx
-    import jax
-    import jax.numpy as jnp
-
     from bendflow.config import load_math_config
     from bendflow.curvature import local_bound, mdot_closed_form
     from bendflow.data import load_images
@@ -165,49 +146,36 @@ def main():
     from bendflow.posterior import EmpiricalPosterior, diameter
     from bendflow.samplers import UniformEuler
 
-    if not args.float32:
-        jax.config.update("jax_enable_x64", True)
+    device = experiment_device(args.device)
     start = time.perf_counter()
     cfg = load_math_config()
 
     raw = load_images(args.dataset)
-    post = EmpiricalPosterior(jnp.asarray(raw, dtype=jnp.float32 if args.float32 else jnp.float64))
+    dtype = torch.float32 if args.float32 else torch.float64
+    post = EmpiricalPosterior(torch.as_tensor(raw, dtype=dtype, device=device), args.schedule)
     field = ExactField(post)
     n, d = raw.shape
-    dtype = post.data.dtype
-    k_x0, k_lam, k_check, k_pick = jax.random.split(jax.random.key(args.seed), 4)
-    print(
-        f"{args.dataset}: N={n} d={d} dtype={dtype} traj={args.num_traj} steps={args.steps}",
-        flush=True,
-    )
+    rng = generator(device, args.seed + 1)
+    print(f"{args.dataset}: N={n} d={d} dtype={dtype} device={device} traj={args.num_traj} steps={args.steps}", flush=True)
 
-    # Trajectories of the exact field on a fine uniform grid.
-    sampler = UniformEuler(args.steps)
-    x0s = jax.random.normal(k_x0, (args.num_traj, d), dtype)
-    traj = eqx.filter_jit(lambda xs: jax.lax.map(lambda x: sampler(field, x), xs))(x0s)
-    ts = np.asarray(traj.ts[0, :-1])  # times at which the field was evaluated
-    xs = traj.xs[:, :-1]  # (traj, steps, d)
+    x0s = initial_samples(post.data, args.num_traj, args.seed, args.schedule)
+    traj = UniformEuler(args.steps, args.schedule)(field, x0s)
+    ts = as_numpy(traj.ts[0, :-1])
+    xs = traj.xs[:, :-1]
     print(f"trajectories done, {time.perf_counter() - start:.0f}s", flush=True)
 
-    # (iii) ||mdot|| and how decided the posterior is, at every step.
-    @eqx.filter_jit
     def per_point(x, t):
-        w = jnp.exp(post.log_weights(x, t))
-        mdot = jnp.linalg.norm(mdot_closed_form(post, x, t))
-        return mdot, jnp.max(w), 1.0 / jnp.sum(w**2), jnp.argmax(w)
+        w, m = post.weights_and_mean(x, t)
+        mdot = torch.linalg.vector_norm(mdot_closed_form(post, x, t, (w, m)), dim=-1)
+        return torch.stack((mdot, w.amax(dim=-1), w.square().sum(dim=-1).reciprocal(), w.argmax(dim=-1)), dim=-1)
 
-    flat = jax.lax.map(
-        lambda a: per_point(*a),
-        (xs.reshape(-1, d), jnp.tile(traj.ts[0, :-1], args.num_traj)),
-    )
-    mdot, w_max, n_eff, nearest = (np.asarray(a).reshape(args.num_traj, args.steps) for a in flat)
+    flat = [per_point(x, t) for x, t in zip(xs.reshape(-1, d).split(16), traj.ts[:, :-1].reshape(-1).split(16))]
+    mdot, w_max, n_eff, nearest = as_numpy(torch.cat(flat)).reshape(args.num_traj, args.steps, 4).transpose(2, 0, 1)
     undecided = w_max < UNDECIDED
     print(f"mdot along trajectories done, {time.perf_counter() - start:.0f}s", flush=True)
 
     # (ii) local bounds and the active set.
-    d_all = diameter(raw, cfg.numerics.diameter_chunk)
-    lam_fn = eqx.filter_jit(lambda x, t, k: post.lambda_max(x, t, k, cfg.spectral.power_iters))
-    kappa_fn = eqx.filter_jit(lambda x, t: jnp.linalg.norm(post.kappa(x, t)))
+    d_all = diameter(torch.as_tensor(raw, device=device), cfg.numerics.diameter_chunk)
     steps = np.arange(0, args.steps, args.bound_every)
     b_traj = min(args.bound_traj, args.num_traj)
     names = (
@@ -225,8 +193,8 @@ def main():
         for i, k in enumerate(steps):
             x, t = xs[j, k], traj.ts[j, k]
             bound = local_bound(post, x, t, cfg.active_set.delta, d_all, cfg.numerics.diameter_chunk)
-            b["lam"][j, i], b["lam_residual"][j, i] = lam_fn(x, t, jax.random.fold_in(k_lam, j * args.steps + int(k)))
-            b["kappa"][j, i] = kappa_fn(x, t)
+            b["lam"][j, i], b["lam_residual"][j, i] = [float(v) for v in post.lambda_max(x, t, rng, cfg.spectral.power_iters)]
+            b["kappa"][j, i] = float(torch.linalg.vector_norm(post.kappa(x, t)))
             b["lam_bound"][j, i], b["kappa_bound"][j, i] = bound.lam, bound.kappa
             b["mdot_bound"][j, i], b["d_active"][j, i] = bound.mdot, bound.d_active
             b["n_active"][j, i] = bound.n_active
@@ -236,16 +204,16 @@ def main():
     # posterior has collapsed onto one image, C = kappa = 0 and both sides of
     # every identity vanish, so a relative error says nothing there.
     cand = np.argwhere(undecided[:, 1:]) + [0, 1]
-    if len(cand) == 0:
-        raise SystemExit("no undecided trajectory point; increase --steps")
-    chosen = jax.random.choice(k_pick, len(cand), (min(args.check_points, len(cand)),), replace=False)
-    points = [(xs[j, k], traj.ts[j, k]) for j, k in cand[np.asarray(chosen)]]
-    checks = identity_checks(post, field, points, k_check, args.div_points, args.div_batch)
+    chosen = np.random.default_rng(args.seed).permutation(len(cand))[: args.check_points]
+    points = [(xs[j, k], traj.ts[j, k]) for j, k in cand[chosen]]
+    checks = identity_checks(post, field, points, rng, args.div_points, args.div_batch)
     print(f"identity checks done, {time.perf_counter() - start:.0f}s", flush=True)
 
     def ratio_stats(bound, actual):
         ok = undecided[:b_traj][:, steps] & (actual > 0)
         ratio = bound[ok] / actual[ok]
+        if not ratio.size:
+            return None
         return {
             "min": float(ratio.min()),
             "median": float(np.median(ratio)),
@@ -256,6 +224,7 @@ def main():
     rows = np.arange(args.num_traj)
     commit = [(int(np.argmax(w_max[j] > 0.5)) if (w_max[j] > 0.5).any() else None) for j in rows]
     summary = {
+        "backend": "pytorch",
         "args": vars(args),
         "math_config": {
             "delta": cfg.active_set.delta,
@@ -266,7 +235,7 @@ def main():
         "dtype": str(dtype),
         "diameter_D": d_all,
         "identity_checks": checks,
-        "identity_max_rel_err": {k: max(c[k] for c in checks if k in c) for k in checks[0] if k != "t"},
+        "identity_max_rel_err": {k: max(c[k] for c in checks if k in c) for k in checks[0] if k != "t"} if checks else {},
         "undecided_threshold_w_max": UNDECIDED,
         "lambda_max_max_rel_residual_undecided": float(b["lam_residual"][undecided[:b_traj][:, steps]].max(initial=0.0)),
         "bound_points_undecided": int(undecided[:b_traj][:, steps].sum()),

@@ -2,40 +2,33 @@ import dataclasses
 import json
 from pathlib import Path
 
-import equinox as eqx
-import jax
-import jax.numpy as jnp
+import torch
 
 from bendflow.config import NetworksConfig, load_networks_config
 from bendflow.data import image_shape
 from bendflow.fields import NetworkField
 from bendflow.models import DiT, UNet
+from bendflow.paths import GaussianPath
 from bendflow.train import load_model
 
 
-# Returns the model named "unet" or "dit" built from the networks config, and its training configuration.
-def build_model(name: str, shape: tuple[int, int, int], cfg: NetworksConfig, key):
-    if name == "unet":
-        return UNet(shape, key=key, **dataclasses.asdict(cfg.unet)), cfg.unet_train
-    if name == "dit":
-        return DiT(shape, key=key, **dataclasses.asdict(cfg.dit)), cfg.dit_train
+def build_model(name: str, shape: tuple[int, int, int], cfg: NetworksConfig, seed: int):
+    with torch.random.fork_rng(devices=[]):
+        torch.random.default_generator.manual_seed(seed)
+        if name == "unet":
+            return UNet(shape, **dataclasses.asdict(cfg.unet)).float(), cfg.unet_train
+        if name == "dit":
+            return DiT(shape, **dataclasses.asdict(cfg.dit)).float(), cfg.dit_train
     raise ValueError(f"unknown model {name!r}")
 
 
-# A float32 network used as a field on vectors of any float dtype (float64 when x64 is on).
-class CastField(eqx.Module):
-    field: NetworkField
-
-    def __call__(self, x, t):
-        return self.field(x.astype(jnp.float32), jnp.asarray(t, jnp.float32)).astype(x.dtype)
-
-
-# Loads checkpoints/<dataset>_<name>.eqx as a field, with the metadata written next to it by experiments/train.py.
-def load_network(name: str, dataset: str, ckpt_dir: str = "checkpoints") -> tuple[CastField, dict]:
+def load_network(name: str, dataset: str, ckpt_dir: str | None = None, *, device="cpu", path: GaussianPath = GaussianPath.LINEAR) -> tuple[NetworkField, dict]:
     shape = image_shape(dataset)
-    like, _ = build_model(name, shape, load_networks_config(), jax.random.key(0))
-    like = jax.tree.map(lambda a: a.astype(jnp.float32) if eqx.is_inexact_array(a) else a, like)
-    path = Path(ckpt_dir) / f"{dataset}_{name}.eqx"
-    meta_path = path.with_suffix(".json")
+    model, _ = build_model(name, shape, load_networks_config(), 0)
+    checkpoint = Path(ckpt_dir or f"checkpoints/{path}") / f"{dataset}_{name}.pt"
+    meta_path = checkpoint.with_suffix(".json")
     meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
-    return CastField(NetworkField(load_model(path, like), shape)), meta
+    checkpoint_path = meta.get("args", {}).get("schedule", GaussianPath.LINEAR)
+    if checkpoint_path != path:
+        raise ValueError(f"{checkpoint} was trained with schedule {checkpoint_path!r}, expected {path!r}")
+    return NetworkField(load_model(checkpoint, model).to(device).requires_grad_(False), shape), meta

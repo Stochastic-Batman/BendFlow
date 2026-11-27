@@ -1,5 +1,4 @@
 import numpy as np
-from datasets import load_dataset
 
 # name -> (Hugging Face repository, image column, (channels, height, width))
 _DATASETS = {
@@ -17,6 +16,8 @@ def image_shape(name: str) -> tuple[int, int, int]:
 # float32 array (N, d) with values in [-1, 1], each row flattened in (channels, height, width) order.
 # With return_labels the integer labels are returned as a second array.
 def load_images(name: str, split: str = "train", return_labels: bool = False):
+    from datasets import load_dataset
+
     repo, column, shape = _DATASETS[name]
     ds = load_dataset(repo, split=split).with_format("numpy")
     images = np.asarray(ds[column])

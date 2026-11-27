@@ -1,14 +1,12 @@
-import jax.numpy as jnp
-from jax import Array
+import torch
+from torch import Tensor
 
 
-# Distance between a sample and a reference endpoint started from the same noise.
-def endpoint_error(x: Array, x_ref: Array) -> Array:
-    return jnp.linalg.norm(x - x_ref)
+def endpoint_error(x: Tensor, x_ref: Tensor) -> Tensor:
+    return torch.linalg.vector_norm(x - x_ref)
 
 
-# Distance to the nearest row of data, and its index.
-def nearest_training_distance(x: Array, data: Array) -> tuple[Array, Array]:
-    d2 = jnp.sum((data - x) ** 2, axis=1)
-    i = jnp.argmin(d2)
-    return jnp.sqrt(d2[i]), i
+def nearest_training_distance(x: Tensor, data: Tensor) -> tuple[Tensor, Tensor]:
+    d2 = (data - x).square().sum(dim=1)
+    i = d2.argmin()
+    return d2[i].sqrt(), i

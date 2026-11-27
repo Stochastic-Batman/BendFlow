@@ -202,16 +202,13 @@
     [
       #set text(size: 18pt)
 
+      #v(1cm)
+
       - Start with noise at $t = 0$. The goal is an image at $t = 1$.
 
       #pause
-      #v(1cm)
+      #v(2cm)
       - At state $x$, the model predicts a #hl[velocity] $v_theta (x,t)$. Euler takes a step $x_"next" = x + h v_theta (x,t)$.
-
-      #pause
-
-      #v(1cm)
-      - Then we evaluate the velocity again. If the arrow turns sharply along the path, a big step can miss it.
     ],
 
     [#pause],
@@ -256,7 +253,7 @@
 
   #pause
 
-  #v(1cm)
+  #v(2cm)
 
   #align(center, block(
     fill: highlightpurple,
@@ -468,21 +465,13 @@
 
     #v(0.35em)
     #grid(
-      columns: (1fr, 1.1fr, 1fr),
+      columns: (1fr, 1fr),
       column-gutter: 0.6em,
       [#hl[Linear] \ #text(size: 14pt)[$t x_1 + (1-t) epsilon$]],
       [#hl[Variance preserving (VP)] \ #text(size: 14pt)[$alpha_t x_1 + sqrt(1-alpha_t^2) epsilon$]],
-      [#hl[Variance exploding (VE)] \ #text(size: 14pt)[$x_1 + sigma_t epsilon$]],
     )
   ]
 
-  #pause
-
-  #text(size: 14pt)[We vary the field and schedule. Small datasets let us evaluate the full training set at each exact-field step.]
-
-  #pblock[What we will test][
-    Does a grid chosen #hl[for each sample] improve on a fixed grid at the same number of model calls?
-  ]
 ]
 
 
@@ -495,21 +484,24 @@
 
   #set text(size: 17pt)
 
-  - #hl[Check the formula.] Compare $dot(m)$ with autodiff on the exact field and report relative error.
+  - #hl[Formula agreement.] Along exact-field trajectories, compute $dot(m)$ using the moment formula and automatic differentiation (AD).
+    $ "Relative error" = frac(norm(dot(m)_"formula" - dot(m)_"AD"), norm(dot(m)_"AD")) $
 
-  - #hl[Check the bounds.] Bound the moments from the spread of high-weight images, with a correction for the remaining mass. Compare with the true values along trajectories.
-
-  #pause
-
-  - #hl[Locate the bends.] Test whether peaks coincide with posterior commitment. Compare denoiser motion along trajectories of the learned and exact fields.
+  #v(1cm)
 
   #pause
 
-  - #hl[Compare samplers.] Use Euler for the linear path and DDIM for VP and VE. At matched model evaluations (5–40), compare adaptive, uniform, and fixed grids from the same noise. Report error to a 1000-step reference and show sample grids.
+  - #hl[Peak timing.] For each starting noise sample, compare the timesteps when $norm(dot(m))$ peaks along the exact and learned trajectories (e.g. $|t_"learned" - t_"exact"|$)
 
-  #callout[
-    Primary metric · #hl[Solver error relative to the fine-step reference]
-  ]
+  #v(1cm)
+
+  #pause
+
+  - #hl[Sampler comparison.] Compare BendFlow with the standard sampler at matched average numbers of function evaluations, using pixel RMSE against a reference (1000 steps):
+
+  $
+    "RMSE"_"pixels" = sqrt(1/D sum_(j=1)^D (hat(x)_j - x_j^"ref")^2)
+  $
 ]
 
 

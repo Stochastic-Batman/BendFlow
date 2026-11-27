@@ -1,89 +1,88 @@
-import equinox as eqx
-import jax
-import jax.numpy as jnp
+import math
+
 import numpy as np
-from jax import Array
+import torch
+from torch import Tensor
+
+from bendflow.paths import GaussianPath
 
 
-# Posterior over training images for one sample x of shape (d,) and a scalar t in [0, 1); batch with jax.vmap.
-# C is never built, it is only available through matrix-vector products.
-class EmpiricalPosterior(eqx.Module):
-    data: Array  # (N, d) training set
+class EmpiricalPosterior:
+    """Posterior on the training set, with matrix-free covariance operations."""
 
-    # log w_i with w_i proportional to exp(-||x - t x_i||^2 / 2(1-t)^2)
-    def log_weights(self, x: Array, t: Array) -> Array:
-        g = -jnp.sum((x - t * self.data) ** 2, axis=1) / (2.0 * (1.0 - t) ** 2)
-        return g - jax.nn.logsumexp(g)
+    def __init__(self, data: Tensor, path: GaussianPath = GaussianPath.LINEAR):
+        self.data = data
+        self.path = path
+        self.squared_norm = data.square().sum(dim=-1)
 
-    def weights_and_mean(self, x: Array, t: Array) -> tuple[Array, Array]:
-        w = jnp.exp(self.log_weights(x, t))
+    def log_weights(self, x: Tensor, t: Tensor) -> Tensor:
+        alpha, sigma, _, _ = self.path.coefficients(torch.as_tensor(t, dtype=x.dtype, device=x.device))
+        # Drop the common -||x||² term to avoid materializing (batch, N, d).
+        a = alpha[..., None]
+        logits = (a * (x @ self.data.T) - 0.5 * a.square() * self.squared_norm) / sigma[..., None].square()
+        return torch.log_softmax(logits, dim=-1)
+
+    def weights_and_mean(self, x: Tensor, t: Tensor) -> tuple[Tensor, Tensor]:
+        w = self.log_weights(x, t).exp()
         return w, w @ self.data
 
-    def mean(self, x: Array, t: Array) -> Array:
+    def mean(self, x: Tensor, t: Tensor) -> Tensor:
         return self.weights_and_mean(x, t)[1]
 
-    # C v with C = sum_i w_i (x_i - m)(x_i - m)^T
-    def cov_matvec(self, x: Array, t: Array, v: Array) -> Array:
+    def cov_matvec(self, x: Tensor, t: Tensor, v: Tensor) -> Tensor:
         return self.cov_matvec_from(*self.weights_and_mean(x, t), v)
 
-    # tr C = sum_i w_i ||x_i - m||^2
-    def trace_cov(self, x: Array, t: Array) -> Array:
+    def trace_cov(self, x: Tensor, t: Tensor) -> Tensor:
         w, m = self.weights_and_mean(x, t)
-        return w @ self._sq_dev(m)
+        if m.ndim == 1:
+            # Avoid subtracting nearly equal norms after posterior commitment.
+            return w @ (self.data - m).square().sum(dim=-1)
+        return (w * self._sq_dev(m)).sum(dim=-1)
 
-    # kappa = sum_i w_i ||x_i - m||^2 (x_i - m)
-    def kappa(self, x: Array, t: Array) -> Array:
+    def kappa(self, x: Tensor, t: Tensor) -> Tensor:
         return self.kappa_from(*self.weights_and_mean(x, t))
 
-    # Largest eigenvalue of C by power iteration, returned as (rho, residual). rho approaches it from below,
-    # residual = ||C v - rho v|| / rho, and some eigenvalue of C lies within rho * residual of rho.
-    def lambda_max(self, x: Array, t: Array, key: Array, num_iters: int) -> tuple[Array, Array]:
+    def lambda_max(self, x: Tensor, t: Tensor, rng: torch.Generator, num_iters: int) -> tuple[Tensor, Tensor]:
         w, m = self.weights_and_mean(x, t)
-        rho, res = power_iteration(lambda v: self.cov_matvec_from(w, m, v), x, key, num_iters)
-        return rho, res / jnp.where(rho > 0, rho, 1.0)
+        rho, res = power_iteration(lambda v: self.cov_matvec_from(w, m, v), x, rng, num_iters)
+        return rho, res / torch.where(rho > 0, rho, 1.0)
 
-    # Boolean mask of A = {i : g_i >= g_istar - log(N / delta)}
-    def active_set(self, x: Array, t: Array, delta: float) -> Array:
+    def active_set(self, x: Tensor, t: Tensor, delta: float) -> Tensor:
         logw = self.log_weights(x, t)
-        return logw >= jnp.max(logw) - jnp.log(self.data.shape[0] / delta)
+        return logw >= logw.amax(dim=-1, keepdim=True) - math.log(len(self.data) / delta)
 
-    # The *_from variants take precomputed weights and mean, so that several
-    # moments at the same (x, t) share one pass over the training set.
+    def cov_matvec_from(self, w: Tensor, m: Tensor, v: Tensor) -> Tensor:
+        wp = w * (v @ self.data.T - (m * v).sum(dim=-1, keepdim=True))
+        return wp @ self.data - wp.sum(dim=-1, keepdim=True) * m
 
-    def cov_matvec_from(self, w: Array, m: Array, v: Array) -> Array:
-        wp = w * (self.data @ v - m @ v)
-        return wp @ self.data - jnp.sum(wp) * m
-
-    def kappa_from(self, w: Array, m: Array) -> Array:
+    def kappa_from(self, w: Tensor, m: Tensor) -> Tensor:
         ws = w * self._sq_dev(m)
-        return ws @ self.data - jnp.sum(ws) * m
+        return ws @ self.data - ws.sum(dim=-1, keepdim=True) * m
 
-    def _sq_dev(self, m: Array) -> Array:
-        return jnp.sum((self.data - m) ** 2, axis=1)
+    def _sq_dev(self, m: Tensor) -> Tensor:
+        return (self.squared_norm - 2 * (m @ self.data.T) + m.square().sum(dim=-1, keepdim=True)).clamp_min(0)
 
 
-# Returns (rho, ||M v - rho v||): the Rayleigh quotient and its absolute residual after num_iters
-# power iterations from a random start. Both are 0 for the zero operator.
-def power_iteration(matvec, like: Array, key: Array, num_iters: int) -> tuple[Array, Array]:
+def power_iteration(matvec, like: Tensor, rng: torch.Generator, num_iters: int) -> tuple[Tensor, Tensor]:
+    def normalize(u):
+        norm = torch.linalg.vector_norm(u)
+        return u / torch.where(norm > 0, norm, 1.0)
 
-    def normalise(u):
-        n = jnp.linalg.norm(u)
-        return u / jnp.where(n > 0, n, 1.0)
-
-    v0 = normalise(jax.random.normal(key, like.shape, like.dtype))
-    v = jax.lax.fori_loop(0, num_iters, lambda _, v: normalise(matvec(v)), v0)
+    v = normalize(torch.randn(like.shape, dtype=like.dtype, device=like.device, generator=rng))
+    for _ in range(num_iters):
+        v = normalize(matvec(v))
     mv = matvec(v)
     rho = v @ mv
-    return rho, jnp.linalg.norm(mv - rho * v)
+    return rho, torch.linalg.vector_norm(mv - rho * v)
 
 
-# Largest pairwise distance between the rows, computed in blocks of chunk_size rows. NumPy, not jittable, O(N^2 d).
 def diameter(points, chunk_size: int = 1024) -> float:
-    p = np.asarray(points)
-    sq = np.sum(p * p, axis=1)
+    """Largest pairwise Euclidean distance, computed in blocks of rows."""
+    p = torch.as_tensor(points)
+    sq = p.square().sum(dim=1)
     best = 0.0
-    for start in range(0, p.shape[0], chunk_size):
+    for start in range(0, len(p), chunk_size):
         block = p[start : start + chunk_size]
-        d2 = sq[start : start + chunk_size, None] + sq[None, :] - 2.0 * (block @ p.T)
+        d2 = sq[start : start + chunk_size, None] + sq[None, :] - 2 * (block @ p.T)
         best = max(best, float(d2.max()))
-    return float(np.sqrt(max(best, 0.0)))
+    return float(np.sqrt(best))

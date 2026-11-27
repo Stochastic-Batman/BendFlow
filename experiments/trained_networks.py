@@ -1,14 +1,16 @@
 import argparse
 import json
 import time
-from pathlib import Path
+from functools import partial
 
 import matplotlib
 import numpy as np
+import torch
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from bendflow.experiment import add_runtime_args, as_numpy, experiment_device, generator, initial_samples, result_directory
 from bendflow.plotting import save_figure, science_figure
 
 # A point counts as undecided while the largest posterior weight is below this (same as exact_field.py).
@@ -27,9 +29,10 @@ def parse_args():
     p.add_argument("--eig-traj", type=int, default=4, help="trajectories with Jacobian eigenvalues")
     p.add_argument("--eig-every", type=int, default=5, help="evaluate eigenvalues every n-th step")
     p.add_argument("--seed", type=int, default=0, help="same seed as exact_field.py gives the same starting noise")
-    p.add_argument("--checkpoints", default="checkpoints")
+    p.add_argument("--checkpoints", default=None)
     p.add_argument("--out", default=None, help="output directory")
     p.add_argument("--replot", action="store_true", help="only redraw the figures from the saved curves.npz")
+    add_runtime_args(p)
     return p.parse_args()
 
 
@@ -109,7 +112,7 @@ def draw_all(out, ts, eig_steps, curves, n_show):
 
 def main():
     args = parse_args()
-    out = Path(args.out or f"results/trained_networks_{args.dataset}")
+    out = result_directory(args, "trained_networks")
     out.mkdir(parents=True, exist_ok=True)
     n_show = min(4, args.num_traj)
 
@@ -124,10 +127,6 @@ def main():
         print(f"figures redrawn in {out}/")
         return
 
-    import equinox as eqx
-    import jax
-    import jax.numpy as jnp
-
     from bendflow.config import load_math_config
     from bendflow.curvature import jacobian_top_eig, mdot_autodiff, mdot_closed_form
     from bendflow.data import load_images
@@ -136,53 +135,46 @@ def main():
     from bendflow.posterior import EmpiricalPosterior
     from bendflow.samplers import UniformEuler
 
-    jax.config.update("jax_enable_x64", True)
+    device = experiment_device(args.device)
     start = time.perf_counter()
-
-    def run_trajectories(field, x0s, steps):
-        sampler = UniformEuler(steps)
-        return eqx.filter_jit(lambda f, xs: jax.lax.map(lambda x: sampler(f, x), xs))(field, x0s)
-
     cfg = load_math_config()
     raw = load_images(args.dataset)
-    post = EmpiricalPosterior(jnp.asarray(raw, dtype=jnp.float64))
+    post = EmpiricalPosterior(torch.as_tensor(raw, dtype=torch.float64, device=device), args.schedule)
     exact = ExactField(post)
     n, d = raw.shape
-    # Same key split and draw as exact_field.py, so trajectory j starts from the same noise there and here.
-    k_x0, k_eig, _, _ = jax.random.split(jax.random.key(args.seed), 4)
-    x0s = jax.random.normal(k_x0, (args.num_traj, d), jnp.float64)
+    rng = generator(device, args.seed + 1)
+    x0s = initial_samples(post.data, args.num_traj, args.seed, args.schedule)
     eig_steps = np.arange(0, args.steps, args.eig_every)
     e_traj = min(args.eig_traj, args.num_traj)
-    print(f"{args.dataset}: N={n} d={d} traj={args.num_traj} steps={args.steps} models={args.models}", flush=True)
+    print(f"{args.dataset}: N={n} d={d} device={device} traj={args.num_traj} steps={args.steps} models={args.models}", flush=True)
 
-    @eqx.filter_jit
     def exact_point(x, t):
-        w = jnp.exp(post.log_weights(x, t))
-        return jnp.linalg.norm(mdot_closed_form(post, x, t)), jnp.max(w)
+        w, m = post.weights_and_mean(x, t)
+        return torch.linalg.vector_norm(mdot_closed_form(post, x, t, (w, m)), dim=-1), w.amax(dim=-1)
 
-    @eqx.filter_jit
     def network_point(net, x, t, x1_hat):
         w, m = post.weights_and_mean(x, t)
-        err = jnp.linalg.norm(x1_hat - m) / jnp.sqrt(d)
-        return err, jnp.linalg.norm(mdot_autodiff(net, x, t)), jnp.linalg.norm(mdot_closed_form(post, x, t)), jnp.max(w), jnp.argmax(w)
+        err = torch.linalg.vector_norm(x1_hat - m, dim=-1) / np.sqrt(d)
+        return (
+            err,
+            torch.linalg.vector_norm(mdot_autodiff(net, x, t, args.schedule), dim=-1),
+            torch.linalg.vector_norm(mdot_closed_form(post, x, t, (w, m)), dim=-1),
+            w.amax(dim=-1),
+        )
 
-    lam_fn = eqx.filter_jit(lambda x, t, k: post.lambda_max(x, t, k, cfg.spectral.power_iters))
-    eig_fn = eqx.filter_jit(lambda net, x, t, k: jacobian_top_eig(net, x, t, k, cfg.spectral.power_iters))
+    def measure(fn, tr, *extra):
+        columns = (tr.xs[:, :-1].reshape(-1, d), tr.ts[:, :-1].reshape(-1), *extra)
+        values = [fn(*batch) for batch in zip(*(column.split(8) for column in columns))]
+        return tuple(as_numpy(torch.cat(parts)).reshape(args.num_traj, args.steps) for parts in zip(*values))
 
-    def flat_times(traj):
-        return jnp.tile(traj.ts[0, :-1], args.num_traj)
-
-    def reshape(a):
-        return np.asarray(a).reshape(args.num_traj, args.steps)
-
-    # Exact field along its own trajectories.
-    traj = run_trajectories(exact, x0s, args.steps)
-    ts = np.asarray(traj.ts[0, :-1])
-    res = jax.lax.map(lambda a: exact_point(*a), (traj.xs[:, :-1].reshape(-1, d), flat_times(traj)))
-    mdot_ex, wmax_ex = (reshape(a) for a in res)
-    end_nearest_ex = [int(jnp.argmin(jnp.sum((post.data - x) ** 2, axis=1))) for x in traj.xs[:, -1]]
+    sampler = UniformEuler(args.steps, args.schedule)
+    traj = sampler(exact, x0s)
+    ts = as_numpy(traj.ts[0, :-1])
+    mdot_ex, wmax_ex = measure(exact_point, traj)
+    end_nearest_ex = [int((post.data - x).square().sum(dim=-1).argmin()) for x in traj.sample]
     curves = {"exact": {"mdot": mdot_ex, "w_max": wmax_ex}}
     summary = {
+        "backend": "pytorch",
         "args": vars(args),
         "n": n,
         "d": d,
@@ -192,13 +184,12 @@ def main():
     print(f"exact field done, {time.perf_counter() - start:.0f}s", flush=True)
 
     for name in args.models:
-        net, meta = load_network(name, args.dataset, args.checkpoints)
-        tr = run_trajectories(net, x0s, args.steps)
+        net, meta = load_network(name, args.dataset, args.checkpoints, device=device, path=args.schedule)
+        tr = sampler(net, x0s)
         xs = tr.xs[:, :-1]
-        res = jax.lax.map(lambda a, net=net: network_point(net, *a), (xs.reshape(-1, d), flat_times(tr), tr.x1_hats.reshape(-1, d)))
-        err, mdot_net, mdot_ex_here, wmax_here, _ = (reshape(a) for a in res)
-        # Estimator (18): difference of consecutive denoised predictions; entry k describes t_k.
-        x1h = np.asarray(tr.x1_hats)
+        err, mdot_net, mdot_ex_here, wmax_here = measure(partial(network_point, net), tr, tr.x1_hats.reshape(-1, d))
+        # Estimator (18): difference of consecutive denoised predictions; entry k uses the interval [t_k, t_{k + 1}].
+        x1h = as_numpy(tr.x1_hats)
         mdot_est = np.linalg.norm(np.diff(x1h, axis=1), axis=2) * args.steps
 
         # Top eigenvalue of the symmetric part of the network Jacobian, and the upper end of (5) at the same point.
@@ -206,16 +197,15 @@ def main():
         for j in range(e_traj):
             for i, k in enumerate(eig_steps):
                 x, t = xs[j, k], tr.ts[j, k]
-                key = jax.random.fold_in(k_eig, j * args.steps + int(k))
-                mu, r = eig_fn(net, x, t, key)
-                lam, _ = lam_fn(x, t, key)
+                mu, r = jacobian_top_eig(net, x, t, rng, cfg.spectral.power_iters)
+                lam, _ = post.lambda_max(x, t, rng, cfg.spectral.power_iters)
                 eig_net[j, i], eig_res[j, i] = float(mu), float(r) / max(abs(float(mu)), 1e-12)
-                eig_exact[j, i] = float((t * lam / (1 - t) ** 2 - 1) / (1 - t))
+                alpha, sigma, _, sigma_dot = args.schedule.coefficients(t)
+                eig_exact[j, i] = float(args.schedule.velocity_scale(t) * alpha / sigma.square() * lam + sigma_dot / sigma)
 
-        samples = tr.xs[:, -1]
-        near = [jnp.sqrt(jnp.sum((post.data - x) ** 2, axis=1)) for x in samples]
-        near_dist = [float(jnp.min(a)) / np.sqrt(d) for a in near]
-        near_idx = [int(jnp.argmin(a)) for a in near]
+        near = [torch.linalg.vector_norm(post.data - x, dim=-1) for x in tr.sample]
+        near_dist = [float(a.min()) / np.sqrt(d) for a in near]
+        near_idx = [int(a.argmin()) for a in near]
         undecided = wmax_here < UNDECIDED
         val = meta.get("val_loss", [])
         summary[name] = {

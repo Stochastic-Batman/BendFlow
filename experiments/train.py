@@ -4,11 +4,11 @@ import json
 import time
 from pathlib import Path
 
-import equinox as eqx
-import jax
+import torch
 
 from bendflow.config import load_networks_config
 from bendflow.data import image_shape, load_images
+from bendflow.experiment import add_runtime_args, experiment_device
 from bendflow.networks import build_model
 from bendflow.train import save_model, train
 
@@ -25,29 +25,31 @@ def main():
         default=None,
         help="use only the first n images (timing runs)",
     )
-    p.add_argument("--out", default="checkpoints")
+    p.add_argument("--out", default=None)
+    add_runtime_args(p)
     args = p.parse_args()
 
-    k_model, k_train = jax.random.split(jax.random.key(args.seed))
+    device = experiment_device(args.device)
     shape = image_shape(args.dataset)
-    model, cfg = build_model(args.model, shape, load_networks_config(), k_model)
+    model, cfg = build_model(args.model, shape, load_networks_config(), args.seed)
+    model.to(device)
     if args.epochs is not None:
         cfg = dataclasses.replace(cfg, epochs=args.epochs)
     data = load_images(args.dataset)[: args.limit]
-    n_params = sum(a.size for a in jax.tree.leaves(eqx.filter(model, eqx.is_inexact_array)))
+    n_params = sum(param.numel() for param in model.parameters())
     print(
-        f"{args.dataset} {args.model}: N={len(data)} params={n_params} devices={jax.devices()}",
+        f"{args.dataset} {args.model}: N={len(data)} params={n_params} device={device}",
         flush=True,
     )
     print("train config:", json.dumps(dataclasses.asdict(cfg)), flush=True)
 
     start = time.perf_counter()
-    model, history = train(model, data, shape, cfg, k_train, log=lambda s: print(s, flush=True))
+    model, history = train(model, data, shape, cfg, args.seed, log=lambda s: print(s, flush=True), path=args.schedule)
 
     suffix = "" if args.limit is None and args.epochs is None else "_timing"
-    path = Path(args.out) / f"{args.dataset}_{args.model}{suffix}.eqx"
+    path = Path(args.out or f"checkpoints/{args.schedule}") / f"{args.dataset}_{args.model}{suffix}.pt"
     save_model(path, model)
-    history.update(args=vars(args), train_config=dataclasses.asdict(cfg), params=n_params)
+    history.update(backend="pytorch", framework_version=str(torch.__version__), args=vars(args), train_config=dataclasses.asdict(cfg), params=n_params)
     path.with_suffix(".json").write_text(json.dumps(history, indent=2))
 
     print("--- summary ---")

@@ -1,117 +1,94 @@
-import equinox as eqx
-import jax
-import jax.numpy as jnp
-from jax import Array
+import torch
+from torch import Tensor, nn
+from torch.nn import functional as F
 
 from bendflow.models.common import TimeMLP, zero_init
 
 
-def _layer_norm(dim: int) -> eqx.nn.LayerNorm:
-    return eqx.nn.LayerNorm(dim, use_weight=False, use_bias=False)
-
-
-# Cosines and sines of the 2D RoPE angles, each (grid_h * grid_w, head_dim / 2), tokens in row-major order.
-# The first head_dim / 4 columns use the row index of a token, the rest its column index.
-def rope_tables(grid_h: int, grid_w: int, head_dim: int, base: float = 10000.0) -> tuple[Array, Array]:
+def rope_tables(grid_h: int, grid_w: int, head_dim: int, base: float = 10000.0) -> tuple[Tensor, Tensor]:
     quarter = head_dim // 4
-    freqs = base ** (-jnp.arange(quarter) / quarter)
-    rows, cols = jnp.meshgrid(jnp.arange(grid_h), jnp.arange(grid_w), indexing="ij")
-    angles = jnp.concatenate([rows.reshape(-1, 1) * freqs, cols.reshape(-1, 1) * freqs], axis=1)
-    return jnp.cos(angles), jnp.sin(angles)
+    freqs = base ** (-torch.arange(quarter, dtype=torch.get_default_dtype()) / quarter)
+    rows, cols = torch.meshgrid(torch.arange(grid_h), torch.arange(grid_w), indexing="ij")
+    angles = torch.cat([rows.reshape(-1, 1) * freqs, cols.reshape(-1, 1) * freqs], dim=1)
+    return angles.cos(), angles.sin()
 
 
-# Rotates the entry pairs (2k, 2k + 1) of x (tokens, heads, head_dim) by the angle k of each token.
-def rope_rotate(x: Array, cos: Array, sin: Array) -> Array:
-    a, b, cos, sin = x[..., 0::2], x[..., 1::2], cos[:, None, :], sin[:, None, :]
-    return jnp.stack([a * cos - b * sin, a * sin + b * cos], axis=-1).reshape(x.shape)
+def rope_rotate(x: Tensor, cos: Tensor, sin: Tensor) -> Tensor:
+    a, b = x[..., 0::2], x[..., 1::2]
+    cos, sin = cos[:, None], sin[:, None]
+    return torch.stack([a * cos - b * sin, a * sin + b * cos], dim=-1).reshape_as(x)
 
 
-class DiTBlock(eqx.Module):
-    norm1: eqx.nn.LayerNorm
-    attn: eqx.nn.MultiheadAttention
-    norm2: eqx.nn.LayerNorm
-    mlp_in: eqx.nn.Linear
-    mlp_out: eqx.nn.Linear
-    ada: eqx.nn.Linear
-
-    def __init__(self, dim: int, num_heads: int, mlp_ratio: float, *, key: Array):
-        k1, k2, k3, k4 = jax.random.split(key, 4)
+class DiTBlock(nn.Module):
+    def __init__(self, dim: int, num_heads: int, mlp_ratio: float):
+        super().__init__()
         hidden = int(dim * mlp_ratio)
-        self.norm1 = _layer_norm(dim)
-        self.attn = eqx.nn.MultiheadAttention(
-            num_heads,
-            dim,
-            use_query_bias=True,
-            use_key_bias=True,
-            use_value_bias=True,
-            use_output_bias=True,
-            key=k1,
-        )
-        self.norm2 = _layer_norm(dim)
-        self.mlp_in = eqx.nn.Linear(dim, hidden, key=k2)
-        self.mlp_out = eqx.nn.Linear(hidden, dim, key=k3)
-        self.ada = zero_init(eqx.nn.Linear(dim, 6 * dim, key=k4))
+        self.num_heads = num_heads
+        self.norm1 = nn.LayerNorm(dim, elementwise_affine=False)
+        self.query = nn.Linear(dim, dim)
+        self.key = nn.Linear(dim, dim)
+        self.value = nn.Linear(dim, dim)
+        self.attn_out = nn.Linear(dim, dim)
+        self.norm2 = nn.LayerNorm(dim, elementwise_affine=False)
+        self.mlp_in = nn.Linear(dim, hidden)
+        self.mlp_out = nn.Linear(hidden, dim)
+        self.ada = zero_init(nn.Linear(dim, 6 * dim))
 
-    # x: tokens (L, dim), c: conditioning vector (dim,), rope: output of rope_tables
-    def __call__(self, x: Array, c: Array, rope: tuple[Array, Array]) -> Array:
-        s1, b1, g1, s2, b2, g2 = jnp.split(self.ada(jax.nn.silu(c)), 6)
-        h = jax.vmap(self.norm1)(x) * (1.0 + s1) + b1
-        x = x + g1 * self.attn(h, h, h, process_heads=lambda q, k, v: (rope_rotate(q, *rope), rope_rotate(k, *rope), v))
-        h = jax.vmap(self.norm2)(x) * (1.0 + s2) + b2
-        return x + g2 * jax.vmap(lambda z: self.mlp_out(jax.nn.gelu(self.mlp_in(z))))(h)
+    def forward(self, x: Tensor, c: Tensor, rope: tuple[Tensor, Tensor]) -> Tensor:
+        s1, b1, g1, s2, b2, g2 = self.ada(F.silu(c)).unsqueeze(1).chunk(6, dim=-1)
+        h = self.norm1(x) * (1 + s1) + b1
+        q, k, v = (layer(h).unflatten(-1, (self.num_heads, -1)) for layer in (self.query, self.key, self.value))
+        q, k = rope_rotate(q, *rope), rope_rotate(k, *rope)
+        attention = F.scaled_dot_product_attention(q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2))
+        x = x + g1 * self.attn_out(attention.transpose(1, 2).reshape_as(h))
+        h = self.norm2(x) * (1 + s2) + b2
+        return x + g2 * self.mlp_out(F.gelu(self.mlp_in(h), approximate="tanh"))
 
 
-# Time-conditioned DiT with adaLN-Zero and 2D RoPE, called as model(x, t) on one image (channels, height, width).
-# The keyword arguments match the [dit] table of configs/networks.toml.
-class DiT(eqx.Module):
-    image_shape: tuple[int, int, int]
-    patch_size: int
-    head_dim: int
-    patch_embed: eqx.nn.Linear
-    time_mlp: TimeMLP
-    blocks: list[DiTBlock]
-    norm_out: eqx.nn.LayerNorm
-    ada_out: eqx.nn.Linear
-    linear_out: eqx.nn.Linear
+class DiT(nn.Module):
+    """Time-conditioned pixel-space DiT with adaLN-Zero and 2D RoPE."""
 
-    def __init__(self, image_shape: tuple[int, int, int], *, patch_size: int, hidden_dim: int, depth: int, num_heads: int, mlp_ratio: float, key: Array):
+    def __init__(self, image_shape: tuple[int, int, int], *, patch_size: int, hidden_dim: int, depth: int, num_heads: int, mlp_ratio: float):
+        super().__init__()
         c, h, w = image_shape
         if h % patch_size or w % patch_size:
             raise ValueError(f"patch_size {patch_size} must divide the image size {h}x{w}")
         if hidden_dim % num_heads or (hidden_dim // num_heads) % 4:
             raise ValueError(f"hidden_dim / num_heads must be a multiple of 4 for 2D RoPE, got {hidden_dim} / {num_heads}")
-        k_embed, k_time, k_ada, k_out, *k_blocks = jax.random.split(key, 4 + depth)
-        patch_dim = patch_size * patch_size * c
-
         self.image_shape = tuple(image_shape)
         self.patch_size = patch_size
         self.head_dim = hidden_dim // num_heads
-        self.patch_embed = eqx.nn.Linear(patch_dim, hidden_dim, key=k_embed)
-        self.time_mlp = TimeMLP(hidden_dim, key=k_time)
-        self.blocks = [DiTBlock(hidden_dim, num_heads, mlp_ratio, key=k) for k in k_blocks]
-        self.norm_out = _layer_norm(hidden_dim)
-        self.ada_out = zero_init(eqx.nn.Linear(hidden_dim, 2 * hidden_dim, key=k_ada))
-        self.linear_out = zero_init(eqx.nn.Linear(hidden_dim, patch_dim, key=k_out))
+        patch_dim = patch_size * patch_size * c
+        self.patch_embed = nn.Linear(patch_dim, hidden_dim)
+        self.time_mlp = TimeMLP(hidden_dim)
+        self.blocks = nn.ModuleList(DiTBlock(hidden_dim, num_heads, mlp_ratio) for _ in range(depth))
+        self.norm_out = nn.LayerNorm(hidden_dim, elementwise_affine=False)
+        self.ada_out = zero_init(nn.Linear(hidden_dim, 2 * hidden_dim))
+        self.linear_out = zero_init(nn.Linear(hidden_dim, patch_dim))
+        cos, sin = rope_tables(h // patch_size, w // patch_size, self.head_dim)
+        self.register_buffer("rope_cos", cos, persistent=False)
+        self.register_buffer("rope_sin", sin, persistent=False)
 
-    # (C, H, W) -> (num_patches, p * p * C)
-    def patchify(self, x: Array) -> Array:
+    def patchify(self, x: Tensor) -> Tensor:
         (c, h, w), p = self.image_shape, self.patch_size
-        x = x.reshape(c, h // p, p, w // p, p).transpose(1, 3, 2, 4, 0)
-        return x.reshape((h // p) * (w // p), p * p * c)
+        return x.reshape(*x.shape[:-3], c, h // p, p, w // p, p).movedim(-5, -1).transpose(-4, -3).flatten(-3).flatten(-3, -2)
 
-    # (num_patches, p * p * C) -> (C, H, W)
-    def unpatchify(self, tokens: Array) -> Array:
+    def unpatchify(self, tokens: Tensor) -> Tensor:
         (c, h, w), p = self.image_shape, self.patch_size
-        x = tokens.reshape(h // p, w // p, p, p, c).transpose(4, 0, 2, 1, 3)
-        return x.reshape(c, h, w)
+        batch_dims = tokens.shape[:-2]
+        b = len(batch_dims)
+        x = tokens.reshape(*batch_dims, h // p, w // p, p, p, c)
+        x = x.permute(*range(b), b + 4, b, b + 2, b + 1, b + 3)
+        return x.reshape(*batch_dims, c, h, w)
 
-    def __call__(self, x: Array, t: Array) -> Array:
-        (_, height, width), p = self.image_shape, self.patch_size
-        cond = self.time_mlp(t)
-        rope = rope_tables(height // p, width // p, self.head_dim)
-        h = jax.vmap(self.patch_embed)(self.patchify(x))
-        for blk in self.blocks:
-            h = blk(h, cond, rope)
-        shift, scale = jnp.split(self.ada_out(jax.nn.silu(cond)), 2)
-        h = jax.vmap(self.norm_out)(h) * (1.0 + scale) + shift
-        return self.unpatchify(jax.vmap(self.linear_out)(h))
+    def forward(self, x: Tensor, t: Tensor) -> Tensor:
+        unbatched = x.ndim == 3
+        if unbatched:
+            x = x.unsqueeze(0)
+        cond = self.time_mlp(t.expand(x.shape[0]))
+        h = self.patch_embed(self.patchify(x))
+        for block in self.blocks:
+            h = block(h, cond, (self.rope_cos, self.rope_sin))
+        shift, scale = self.ada_out(F.silu(cond)).unsqueeze(1).chunk(2, dim=-1)
+        out = self.unpatchify(self.linear_out(self.norm_out(h) * (1 + scale) + shift))
+        return out[0] if unbatched else out

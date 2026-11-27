@@ -1,23 +1,36 @@
-import jax
 import pytest
-
-# The identities are checked against autodiff at tight tolerances.
-jax.config.update("jax_enable_x64", True)
+import torch
 
 from bendflow.posterior import EmpiricalPosterior
 
 N, D = 20, 5
 
 
+@pytest.fixture(autouse=True, scope="session")
+def numerical_settings():
+    old_dtype, old_threads = torch.get_default_dtype(), torch.get_num_threads()
+    torch.set_default_dtype(torch.float64)
+    torch.set_num_threads(min(old_threads, 2))
+    yield
+    torch.set_default_dtype(old_dtype)
+    torch.set_num_threads(old_threads)
+
+
+def rng(seed):
+    return torch.Generator().manual_seed(seed)
+
+
+def normal(seed, shape):
+    return torch.randn(shape, generator=rng(seed))
+
+
 @pytest.fixture
 def posterior():
-    return EmpiricalPosterior(jax.random.normal(jax.random.key(0), (N, D)))
+    return EmpiricalPosterior(normal(0, (N, D)))
 
 
 @pytest.fixture(params=[0.15, 0.5, 0.8])
-# A point (x, t) on the path of a training image.
 def point(request, posterior):
-    t = request.param
-    k_i, k_eps = jax.random.split(jax.random.key(int(100 * t)))
-    x1 = posterior.data[jax.random.randint(k_i, (), 0, N)]
-    return t * x1 + (1 - t) * jax.random.normal(k_eps, (D,)), jax.numpy.asarray(t)
+    t = torch.tensor(request.param)
+    index = torch.randint(N, (), generator=rng(int(100 * t)))
+    return t * posterior.data[index] + (1 - t) * normal(int(100 * t) + 1, (D,)), t
